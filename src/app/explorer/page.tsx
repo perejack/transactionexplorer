@@ -95,7 +95,7 @@ function Field({ label, value }: { label: string; value: React.ReactNode }) {
 
 export default function ExplorerPage() {
   const router = useRouter();
-  const supabase = useMemo(() => createSupabaseBrowserClient(), []);
+  const [supabase, setSupabase] = useState<ReturnType<typeof createSupabaseBrowserClient> | null>(null);
 
   const [tills, setTills] = useState<Till[]>([]);
   const [selectedTillId, setSelectedTillId] = useState<string>("");
@@ -120,6 +120,14 @@ export default function ExplorerPage() {
   const [drawerTx, setDrawerTx] = useState<any>(null);
 
   const [toast, setToast] = useState<string | null>(null);
+
+  useEffect(() => {
+    try {
+      setSupabase(createSupabaseBrowserClient());
+    } catch (err: any) {
+      setToast(err?.message || "Missing Supabase environment variables");
+    }
+  }, []);
 
   useEffect(() => {
     if (!toast) return;
@@ -258,6 +266,11 @@ export default function ExplorerPage() {
   }, [selectedTillId, status, startDate, endDate, selectedAmount, search]);
 
   const onSignOut = async () => {
+    if (!supabase) {
+      setToast("Missing Supabase configuration");
+      return;
+    }
+
     await supabase.auth.signOut();
     router.replace("/login");
   };

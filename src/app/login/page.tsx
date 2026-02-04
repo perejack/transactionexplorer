@@ -1,6 +1,6 @@
 "use client";
 
-import { Suspense, useMemo, useState } from "react";
+import { Suspense, useEffect, useState } from "react";
 import { useRouter, useSearchParams } from "next/navigation";
 import { Lock, Mail, ShieldAlert } from "lucide-react";
 import { createSupabaseBrowserClient } from "@/lib/supabase/browser";
@@ -12,12 +12,21 @@ function LoginPageInner() {
   const nextPath = searchParams.get("next") || "/";
   const forbidden = searchParams.get("forbidden") === "1";
 
-  const supabase = useMemo(() => createSupabaseBrowserClient(), []);
+  const [supabase, setSupabase] = useState<ReturnType<typeof createSupabaseBrowserClient> | null>(null);
+  const [supabaseError, setSupabaseError] = useState<string | null>(null);
 
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
+
+  useEffect(() => {
+    try {
+      setSupabase(createSupabaseBrowserClient());
+    } catch (err: any) {
+      setSupabaseError(err?.message || "Missing Supabase environment variables");
+    }
+  }, []);
 
   const onLogin = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -25,6 +34,11 @@ function LoginPageInner() {
     setLoading(true);
 
     try {
+      if (!supabase) {
+        setError(supabaseError || "Missing Supabase configuration");
+        return;
+      }
+
       const { error: signInError } = await supabase.auth.signInWithPassword({
         email,
         password,
