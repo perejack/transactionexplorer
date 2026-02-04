@@ -31,6 +31,13 @@ type AmountCoverageRow = {
   recipients_messaged: number;
 };
 
+type DailyAmountCoverageRow = {
+  amount: number;
+  tx_count: number;
+  recipients_total: number;
+  recipients_new_ever: number;
+};
+
 type SegmentStatusBreakdown = {
   total: number;
   success: number;
@@ -128,6 +135,14 @@ function AmountChip({
       </span>
     </button>
   );
+}
+
+function parseAmountInput(value: string) {
+  const raw = String(value || "").trim();
+  if (!raw) return undefined;
+  const cleaned = raw.replace(/[,\s]/g, "");
+  const n = Number(cleaned);
+  return Number.isFinite(n) ? n : undefined;
 }
 
 type Till = {
@@ -295,6 +310,8 @@ export default function SmsDashboardPage() {
   const [dailyRows, setDailyRows] = useState<DailyRecipientRow[]>([]);
   const [dailyTotal, setDailyTotal] = useState(0);
   const [dailySummary, setDailySummary] = useState<DailyRecipientsSummary | null>(null);
+  const [dailyAmountCoverage, setDailyAmountCoverage] = useState<DailyAmountCoverageRow[]>([]);
+  const [dailyShowOnlyNewAmounts, setDailyShowOnlyNewAmounts] = useState(false);
   const [dailyLoading, setDailyLoading] = useState(false);
   const [dailyPage, setDailyPage] = useState(1);
   const [dailyLimit] = useState(50);
@@ -534,17 +551,15 @@ export default function SmsDashboardPage() {
         const url = new URL("/api/sms/recipients", window.location.origin);
         url.searchParams.set("date", dailyDate);
         url.searchParams.set("tzOffsetMin", "-180");
+        url.searchParams.set("includeAmountCoverage", "1");
         url.searchParams.set("page", String(dailyPage));
         url.searchParams.set("limit", String(dailyLimit));
         if (dailyStatus) url.searchParams.set("status", dailyStatus);
         if (dailyTillId) url.searchParams.set("tillId", dailyTillId);
         if (dailySearch) url.searchParams.set("search", dailySearch);
 
-        const amountValue = dailyAmount.trim();
-        const amountNum = amountValue ? Number(amountValue) : undefined;
-        if (amountValue && Number.isFinite(amountNum)) {
-          url.searchParams.set("amount", String(amountNum));
-        }
+        const amountNum = parseAmountInput(dailyAmount);
+        if (amountNum !== undefined) url.searchParams.set("amount", String(amountNum));
 
         const res = await fetch(url.toString(), { cache: "no-store" });
         const json = await res.json().catch(() => ({}));
@@ -552,6 +567,7 @@ export default function SmsDashboardPage() {
           setDailyRows([]);
           setDailyTotal(0);
           setDailySummary(null);
+          setDailyAmountCoverage([]);
           setToast(json?.message || "Failed to load daily recipients");
           return;
         }
@@ -559,6 +575,7 @@ export default function SmsDashboardPage() {
         setDailyRows((json?.recipients || []) as DailyRecipientRow[]);
         setDailyTotal(Number(json?.total || 0));
         setDailySummary((json?.summary || null) as any);
+        setDailyAmountCoverage((json?.amountCoverage || []) as any);
       } finally {
         setDailyLoading(false);
       }
@@ -659,8 +676,8 @@ export default function SmsDashboardPage() {
         setSegmentBasePreview((baseJson?.preview || null) as any);
 
         const amountValue = segAmount.trim();
-        const amountNum = amountValue ? Number(amountValue) : undefined;
-        const includeAmount = amountValue && Number.isFinite(amountNum);
+        const amountNum = parseAmountInput(amountValue);
+        const includeAmount = amountNum !== undefined;
 
         if (!includeAmount) {
           setSegmentPreview((baseJson?.preview || null) as any);
@@ -1103,7 +1120,7 @@ export default function SmsDashboardPage() {
                         .map((r) => (
                           <AmountChip
                             key={r.amount}
-                            active={String(r.amount) === segAmount.trim()}
+                            active={parseAmountInput(segAmount) === r.amount}
                             amount={r.amount}
                             txCount={r.tx_count}
                             newCount={r.recipients_new || 0}
@@ -1123,7 +1140,7 @@ export default function SmsDashboardPage() {
                               onClick={() => setSegAmount(String(c.amount))}
                               className={cn(
                                 "rounded-2xl border border-white/10 bg-white/5 px-3 py-2 text-xs font-semibold text-zinc-100 transition hover:bg-white/10",
-                                segAmount.trim() === String(c.amount) ? "ring-1 ring-indigo-400/30" : ""
+                                parseAmountInput(segAmount) === c.amount ? "ring-1 ring-indigo-400/30" : ""
                               )}
                               title={`${c.count} tx`}
                             >
@@ -1362,6 +1379,53 @@ export default function SmsDashboardPage() {
                     />
                   </label>
                 </div>
+
+                {dailyAmountCoverage.length > 0 && (
+                  <div className="mt-4 rounded-3xl border border-white/10 bg-black/20 p-4">
+                    <div className="flex items-center justify-between gap-3">
+                      <div className="text-xs font-semibold text-zinc-200">Amounts</div>
+                      <label className="inline-flex items-center gap-2 text-xs text-zinc-300">
+                        <input
+                          type="checkbox"
+                          checked={dailyShowOnlyNewAmounts}
+                          onChange={(e) => setDailyShowOnlyNewAmounts(e.target.checked)}
+                          className="h-4 w-4 accent-emerald-500"
+                        />
+                        Show only with new
+                      </label>
+                    </div>
+
+                    <div className="mt-3 flex max-h-[220px] flex-wrap gap-2 overflow-auto pr-1">
+                      <button
+                        type="button"
+                        onClick={() => setDailyAmount("")}
+                        className={cn(
+                          "inline-flex items-center gap-2 rounded-2xl border px-3 py-2 text-sm font-semibold transition",
+                          !dailyAmount.trim()
+                            ? "border-indigo-400/40 bg-indigo-500/15 text-indigo-100 ring-1 ring-indigo-400/30"
+                            : "border-white/10 bg-white/5 text-zinc-100 hover:bg-white/10"
+                        )}
+                        title="All amounts"
+                      >
+                        All amounts
+                      </button>
+
+                      {dailyAmountCoverage
+                        .filter((r) => (dailyShowOnlyNewAmounts ? (r.recipients_new_ever || 0) > 0 : true))
+                        .slice(0, 60)
+                        .map((r) => (
+                          <AmountChip
+                            key={r.amount}
+                            active={parseAmountInput(dailyAmount) === r.amount}
+                            amount={r.amount}
+                            txCount={r.tx_count}
+                            newCount={r.recipients_new_ever || 0}
+                            onClick={() => setDailyAmount(String(r.amount))}
+                          />
+                        ))}
+                    </div>
+                  </div>
+                )}
 
                 {dailySummary && (
                   <div className="mt-4 grid grid-cols-2 gap-2 md:grid-cols-4">

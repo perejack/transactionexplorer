@@ -116,6 +116,13 @@ type RecipientRow = {
   sms_day_last_at: string | null;
 };
 
+type AmountCoverageRow = {
+  amount: number;
+  tx_count: number;
+  recipients_total: number;
+  recipients_new_ever: number;
+};
+
 async function fetchSmsStats(
   admin: ReturnType<typeof createSupabaseAdminClient>,
   phones: string[],
@@ -236,9 +243,11 @@ export async function GET(req: Request) {
   const amount = pickNumber(url.searchParams.get("amount"));
   const search = pickString(url.searchParams.get("search"));
 
+  const includeAmountCoverage = String(url.searchParams.get("includeAmountCoverage") ?? "1").toLowerCase() !== "0";
+
   const page = Math.max(1, parseIntSafe(url.searchParams.get("page"), 1));
   const limit = Math.min(200, Math.max(10, parseIntSafe(url.searchParams.get("limit"), 50)));
-  const maxScan = Math.min(50000, Math.max(100, parseIntSafe(url.searchParams.get("maxScan"), 20000)));
+  const maxScan = Math.min(50000, Math.max(100, parseIntSafe(url.searchParams.get("maxScan"), 50000)));
 
   let dateRange: { startIso: string; endIso: string } | null = null;
   if (date) {
@@ -276,9 +285,6 @@ export async function GET(req: Request) {
   }
 
   const totalTx = countRes.count || 0;
-  if (totalTx === 0) {
-    return NextResponse.json({ status: "success", total: 0, recipients: [], summary: { totalTx: 0, recipients: 0 } });
-  }
 
   if (totalTx > maxScan) {
     return NextResponse.json(
@@ -288,6 +294,60 @@ export async function GET(req: Request) {
   }
 
   const pageSize = 1000;
+
+  const amountTxCount = new Map<number, number>();
+  const amountPhones = new Map<number, Set<string>>();
+  const amountCoveragePhones = new Set<string>();
+
+  if (includeAmountCoverage && amount !== undefined) {
+    let baseCountQuery = admin.from("transactions").select("id", { count: "exact", head: true });
+    baseCountQuery = baseCountQuery.gte("created_at", dateRange.startIso).lt("created_at", dateRange.endIso);
+    if (tillId) baseCountQuery = baseCountQuery.eq(tillColumn, tillId);
+    if (txStatus) baseCountQuery = baseCountQuery.eq("status", txStatus);
+    if (search) baseCountQuery = baseCountQuery.or(`phone_number.ilike.%${search}%,reference.ilike.%${search}%`);
+
+    const baseCountRes = await baseCountQuery;
+    if (!baseCountRes.error) {
+      const baseTotalTx = baseCountRes.count || 0;
+
+      if (baseTotalTx > 0 && baseTotalTx <= maxScan) {
+        for (let offset = 0; offset < baseTotalTx; offset += pageSize) {
+          let q = admin
+            .from("transactions")
+            .select("phone_number, amount, created_at")
+            .order("created_at", { ascending: false })
+            .range(offset, Math.min(offset + pageSize - 1, baseTotalTx - 1));
+
+          q = q.gte("created_at", dateRange.startIso).lt("created_at", dateRange.endIso);
+          if (tillId) q = q.eq(tillColumn, tillId);
+          if (txStatus) q = q.eq("status", txStatus);
+          if (search) q = q.or(`phone_number.ilike.%${search}%,reference.ilike.%${search}%`);
+
+          const { data, error: pageError } = await q;
+          if (pageError) break;
+
+          for (const row of data || []) {
+            const phoneE164 = normalizePhoneE164((row as any)?.phone_number);
+            if (!phoneE164) continue;
+            amountCoveragePhones.add(phoneE164);
+
+            const amtRaw = (row as any)?.amount;
+            const amt = amtRaw === null || amtRaw === undefined ? null : Number(amtRaw);
+            if (amt === null || !Number.isFinite(amt)) continue;
+
+            amountTxCount.set(amt, (amountTxCount.get(amt) || 0) + 1);
+
+            let set = amountPhones.get(amt);
+            if (!set) {
+              set = new Set<string>();
+              amountPhones.set(amt, set);
+            }
+            set.add(phoneE164);
+          }
+        }
+      }
+    }
+  }
   const byPhone = new Map<
     string,
     {
@@ -306,65 +366,81 @@ export async function GET(req: Request) {
   let txFailed = 0;
   let txPending = 0;
 
-  for (let offset = 0; offset < totalTx; offset += pageSize) {
-    let q = admin
-      .from("transactions")
-      .select("id, phone_number, status, amount, created_at")
-      .order("created_at", { ascending: false })
-      .range(offset, Math.min(offset + pageSize - 1, totalTx - 1));
+  if (totalTx > 0) {
+    for (let offset = 0; offset < totalTx; offset += pageSize) {
+      let q = admin
+        .from("transactions")
+        .select("id, phone_number, status, amount, created_at")
+        .order("created_at", { ascending: false })
+        .range(offset, Math.min(offset + pageSize - 1, totalTx - 1));
 
-    q = q.gte("created_at", dateRange.startIso).lt("created_at", dateRange.endIso);
-    if (tillId) q = q.eq(tillColumn, tillId);
-    if (txStatus) q = q.eq("status", txStatus);
-    if (amount !== undefined) q = q.eq("amount", amount);
-    if (search) q = q.or(`phone_number.ilike.%${search}%,reference.ilike.%${search}%`);
+      q = q.gte("created_at", dateRange.startIso).lt("created_at", dateRange.endIso);
+      if (tillId) q = q.eq(tillColumn, tillId);
+      if (txStatus) q = q.eq("status", txStatus);
+      if (amount !== undefined) q = q.eq("amount", amount);
+      if (search) q = q.or(`phone_number.ilike.%${search}%,reference.ilike.%${search}%`);
 
-    const { data, error: pageError } = await q;
-    if (pageError) {
-      return NextResponse.json({ status: "error", message: pageError.message }, { status: 400 });
-    }
+      const { data, error: pageError } = await q;
+      if (pageError) {
+        return NextResponse.json({ status: "error", message: pageError.message }, { status: 400 });
+      }
 
-    for (const row of data || []) {
-      const st = String((row as any)?.status || "").toLowerCase();
-      if (st === "success") txSuccess += 1;
-      if (st === "failed") txFailed += 1;
-      if (st === "pending") txPending += 1;
+      for (const row of data || []) {
+        const st = String((row as any)?.status || "").toLowerCase();
+        if (st === "success") txSuccess += 1;
+        if (st === "failed") txFailed += 1;
+        if (st === "pending") txPending += 1;
 
-      const phoneE164 = normalizePhoneE164((row as any)?.phone_number);
-      if (!phoneE164) continue;
-      const local = toKenyanLocalPhone(phoneE164);
-      if (!local) continue;
+        const phoneE164 = normalizePhoneE164((row as any)?.phone_number);
+        if (!phoneE164) continue;
+        const local = toKenyanLocalPhone(phoneE164);
+        if (!local) continue;
 
-      const createdAt = (row as any)?.created_at ? String((row as any)?.created_at) : "";
-      const amtRaw = (row as any)?.amount;
-      const amt = amtRaw === null || amtRaw === undefined ? 0 : Number(amtRaw);
+        const createdAt = (row as any)?.created_at ? String((row as any)?.created_at) : "";
+        const amtRaw = (row as any)?.amount;
+        const amt = amtRaw === null || amtRaw === undefined ? 0 : Number(amtRaw);
 
-      const cur = byPhone.get(phoneE164) || {
-        phone_e164: phoneE164,
-        phone_local: local,
-        last_tx_at: createdAt,
-        tx_count: 0,
-        success_count: 0,
-        failed_count: 0,
-        pending_count: 0,
-        amount_sum: 0,
-      };
+        if (includeAmountCoverage && amount === undefined && Number.isFinite(amt)) {
+          amountCoveragePhones.add(phoneE164);
+          amountTxCount.set(amt, (amountTxCount.get(amt) || 0) + 1);
+          let set = amountPhones.get(amt);
+          if (!set) {
+            set = new Set<string>();
+            amountPhones.set(amt, set);
+          }
+          set.add(phoneE164);
+        }
 
-      cur.tx_count += 1;
-      if (createdAt && (!cur.last_tx_at || createdAt > cur.last_tx_at)) cur.last_tx_at = createdAt;
-      if (st === "success") cur.success_count += 1;
-      if (st === "failed") cur.failed_count += 1;
-      if (st === "pending") cur.pending_count += 1;
-      if (Number.isFinite(amt)) cur.amount_sum += amt;
+        const cur = byPhone.get(phoneE164) || {
+          phone_e164: phoneE164,
+          phone_local: local,
+          last_tx_at: createdAt,
+          tx_count: 0,
+          success_count: 0,
+          failed_count: 0,
+          pending_count: 0,
+          amount_sum: 0,
+        };
 
-      byPhone.set(phoneE164, cur);
+        cur.tx_count += 1;
+        if (createdAt && (!cur.last_tx_at || createdAt > cur.last_tx_at)) cur.last_tx_at = createdAt;
+        if (st === "success") cur.success_count += 1;
+        if (st === "failed") cur.failed_count += 1;
+        if (st === "pending") cur.pending_count += 1;
+        if (Number.isFinite(amt)) cur.amount_sum += amt;
+
+        byPhone.set(phoneE164, cur);
+      }
     }
   }
 
-  const phones = Array.from(byPhone.keys());
+  const statsPhones: string[] =
+    includeAmountCoverage && amountCoveragePhones.size > 0
+      ? Array.from(amountCoveragePhones)
+      : Array.from(byPhone.keys());
   let smsStats: Awaited<ReturnType<typeof fetchSmsStats>>;
   try {
-    smsStats = await fetchSmsStats(admin, phones, dateRange);
+    smsStats = await fetchSmsStats(admin, statsPhones, dateRange);
   } catch (e: any) {
     return NextResponse.json({ status: "error", message: e?.message || "Failed to load SMS stats" }, { status: 500 });
   }
@@ -420,12 +496,30 @@ export async function GET(req: Request) {
   const startIdx = (safePage - 1) * limit;
   const pageRows = rows.slice(startIdx, startIdx + limit);
 
+  const amountCoverage: AmountCoverageRow[] = [];
+  if (includeAmountCoverage && amountTxCount.size > 0) {
+    for (const [amt, phones] of amountPhones.entries()) {
+      let messaged = 0;
+      for (const p of phones) {
+        if ((smsStats.ever.get(p)?.count || 0) > 0) messaged += 1;
+      }
+      amountCoverage.push({
+        amount: amt,
+        tx_count: amountTxCount.get(amt) || 0,
+        recipients_total: phones.size,
+        recipients_new_ever: phones.size - messaged,
+      });
+    }
+    amountCoverage.sort((a, b) => b.tx_count - a.tx_count);
+  }
+
   return NextResponse.json({
     status: "success",
     total: totalRecipients,
     page: safePage,
     limit,
     recipients: pageRows,
+    amountCoverage: amountCoverage.slice(0, 60),
     summary: {
       totalTx,
       txSuccess,
