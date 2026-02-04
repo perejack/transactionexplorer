@@ -4,7 +4,6 @@ import { useEffect, useMemo, useState } from "react";
 import { useRouter } from "next/navigation";
 import {
   ArrowLeft,
-  Calendar,
   Copy,
   ExternalLink,
   Loader2,
@@ -101,8 +100,6 @@ export default function ExplorerPage() {
   const [selectedTillId, setSelectedTillId] = useState<string>("");
 
   const [status, setStatus] = useState<string>("");
-  const [startDate, setStartDate] = useState<string>("");
-  const [endDate, setEndDate] = useState<string>("");
   const [search, setSearch] = useState<string>("");
   const [selectedAmount, setSelectedAmount] = useState<number | null>(null);
 
@@ -176,10 +173,8 @@ export default function ExplorerPage() {
       JSON.stringify({
         selectedTillId,
         status,
-        startDate,
-        endDate,
       }),
-    [selectedTillId, status, startDate, endDate]
+    [selectedTillId, status]
   );
 
   useEffect(() => {
@@ -190,8 +185,6 @@ export default function ExplorerPage() {
         const url = new URL("/api/amount-categories", window.location.origin);
         url.searchParams.set("tillId", selectedTillId);
         if (status) url.searchParams.set("status", status);
-        if (startDate) url.searchParams.set("startDate", startDate);
-        if (endDate) url.searchParams.set("endDate", endDate);
 
         const res = await fetch(url.toString(), { cache: "no-store" });
         const json = await res.json();
@@ -209,21 +202,19 @@ export default function ExplorerPage() {
     };
 
     loadCategories();
-  }, [filtersKey, selectedTillId, status, startDate, endDate]);
+  }, [filtersKey, selectedTillId, status]);
 
   const txFiltersKey = useMemo(
     () =>
       JSON.stringify({
         selectedTillId,
         status,
-        startDate,
-        endDate,
         search,
         selectedAmount,
         txPage,
         txLimit,
       }),
-    [selectedTillId, status, startDate, endDate, search, selectedAmount, txPage, txLimit]
+    [selectedTillId, status, search, selectedAmount, txPage, txLimit]
   );
 
   useEffect(() => {
@@ -236,8 +227,6 @@ export default function ExplorerPage() {
         url.searchParams.set("page", String(txPage));
         url.searchParams.set("limit", String(txLimit));
         if (status) url.searchParams.set("status", status);
-        if (startDate) url.searchParams.set("startDate", startDate);
-        if (endDate) url.searchParams.set("endDate", endDate);
         if (search) url.searchParams.set("search", search);
         if (selectedAmount !== null) url.searchParams.set("amount", String(selectedAmount));
 
@@ -259,11 +248,11 @@ export default function ExplorerPage() {
     };
 
     loadTx();
-  }, [txFiltersKey, selectedTillId, status, startDate, endDate, search, selectedAmount, txPage, txLimit]);
+  }, [txFiltersKey, selectedTillId, status, search, selectedAmount, txPage, txLimit]);
 
   useEffect(() => {
     setTxPage(1);
-  }, [selectedTillId, status, startDate, endDate, selectedAmount, search]);
+  }, [selectedTillId, status, selectedAmount, search]);
 
   const onSignOut = async () => {
     if (!supabase) {
@@ -421,33 +410,6 @@ export default function ExplorerPage() {
                       </label>
                     </div>
 
-                    <div className="grid grid-cols-2 gap-3">
-                      <label className="block">
-                        <span className="mb-2 flex items-center gap-2 text-[11px] font-bold uppercase tracking-wider text-zinc-400">
-                          <Calendar className="h-3.5 w-3.5" />
-                          Start
-                        </span>
-                        <input
-                          value={startDate}
-                          onChange={(e) => setStartDate(e.target.value)}
-                          type="date"
-                          className="h-11 w-full rounded-2xl border border-white/10 bg-black/30 px-4 text-sm text-zinc-100 outline-none focus:border-indigo-400/50"
-                        />
-                      </label>
-                      <label className="block">
-                        <span className="mb-2 flex items-center gap-2 text-[11px] font-bold uppercase tracking-wider text-zinc-400">
-                          <Calendar className="h-3.5 w-3.5" />
-                          End
-                        </span>
-                        <input
-                          value={endDate}
-                          onChange={(e) => setEndDate(e.target.value)}
-                          type="date"
-                          className="h-11 w-full rounded-2xl border border-white/10 bg-black/30 px-4 text-sm text-zinc-100 outline-none focus:border-indigo-400/50"
-                        />
-                      </label>
-                    </div>
-
                     <label className="block">
                       <span className="mb-2 block text-[11px] font-bold uppercase tracking-wider text-zinc-400">
                         Search
@@ -467,8 +429,6 @@ export default function ExplorerPage() {
                       type="button"
                       onClick={() => {
                         setStatus("");
-                        setStartDate("");
-                        setEndDate("");
                         setSearch("");
                         setSelectedAmount(null);
                       }}
@@ -509,7 +469,7 @@ export default function ExplorerPage() {
 
                   {!categoriesLoading && categories.length === 0 && (
                     <div className="col-span-2 rounded-2xl border border-white/10 bg-black/20 p-4 text-sm text-zinc-300">
-                      No categories yet. Try changing the date range or status.
+                      No categories yet. Try changing status or till.
                     </div>
                   )}
                 </div>
