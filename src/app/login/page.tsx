@@ -1,12 +1,12 @@
 "use client";
 
-import { useMemo, useState } from "react";
+import { Suspense, useMemo, useState } from "react";
 import { useRouter, useSearchParams } from "next/navigation";
 import { Lock, Mail, ShieldAlert } from "lucide-react";
 import { createSupabaseBrowserClient } from "@/lib/supabase/browser";
 import { cn } from "@/lib/utils";
 
-export default function LoginPage() {
+function LoginPageInner() {
   const router = useRouter();
   const searchParams = useSearchParams();
   const nextPath = searchParams.get("next") || "/";
@@ -131,5 +131,17 @@ export default function LoginPage() {
         </div>
       </div>
     </div>
+  );
+}
+
+export default function LoginPage() {
+  return (
+    <Suspense
+      fallback={
+        <div className="min-h-screen bg-gradient-to-br from-zinc-950 via-zinc-900 to-black text-zinc-50" />
+      }
+    >
+      <LoginPageInner />
+    </Suspense>
   );
 }
