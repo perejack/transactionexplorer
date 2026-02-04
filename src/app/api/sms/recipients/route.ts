@@ -228,7 +228,7 @@ export async function GET(req: Request) {
 
   const url = new URL(req.url);
   const date = pickString(url.searchParams.get("date"));
-  const tzOffsetMin = Math.max(-14 * 60, Math.min(14 * 60, parseIntSafe(url.searchParams.get("tzOffsetMin"), 0)));
+  const tzOffsetMin = Math.max(-14 * 60, Math.min(14 * 60, parseIntSafe(url.searchParams.get("tzOffsetMin"), -180)));
   const startDate = pickString(url.searchParams.get("startDate"));
   const endDate = pickString(url.searchParams.get("endDate"));
   const txStatus = pickString(url.searchParams.get("status"));

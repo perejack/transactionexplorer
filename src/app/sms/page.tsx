@@ -311,10 +311,10 @@ export default function SmsDashboardPage() {
 
   useEffect(() => {
     if (dailyDate) return;
-    const d = new Date();
-    const y = d.getFullYear();
-    const m = String(d.getMonth() + 1).padStart(2, "0");
-    const day = String(d.getDate()).padStart(2, "0");
+    const kenyaNow = new Date(Date.now() + 3 * 60 * 60_000);
+    const y = kenyaNow.getUTCFullYear();
+    const m = String(kenyaNow.getUTCMonth() + 1).padStart(2, "0");
+    const day = String(kenyaNow.getUTCDate()).padStart(2, "0");
     setDailyDate(`${y}-${m}-${day}`);
   }, [dailyDate]);
 
@@ -533,7 +533,7 @@ export default function SmsDashboardPage() {
       try {
         const url = new URL("/api/sms/recipients", window.location.origin);
         url.searchParams.set("date", dailyDate);
-        url.searchParams.set("tzOffsetMin", String(new Date().getTimezoneOffset()));
+        url.searchParams.set("tzOffsetMin", "-180");
         url.searchParams.set("page", String(dailyPage));
         url.searchParams.set("limit", String(dailyLimit));
         if (dailyStatus) url.searchParams.set("status", dailyStatus);
