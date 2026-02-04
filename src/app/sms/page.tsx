@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useState } from "react";
 import { useRouter } from "next/navigation";
 import {
   ArrowLeft,
@@ -123,6 +123,9 @@ export default function SmsDashboardPage() {
 
   const [toast, setToast] = useState<string | null>(null);
 
+  const [autoRefresh, setAutoRefresh] = useState(false);
+  const [autoRefreshSec, setAutoRefreshSec] = useState(15);
+
   const [balance, setBalance] = useState<number | null>(null);
   const [balanceLoading, setBalanceLoading] = useState(false);
 
@@ -178,13 +181,18 @@ export default function SmsDashboardPage() {
     return () => clearTimeout(t);
   }, [toast]);
 
-  const loadBalance = async () => {
+  const loadBalance = async (opts?: { silent?: boolean }) => {
     setBalanceLoading(true);
     try {
       const res = await fetch("/api/sms/balance", { cache: "no-store" });
       const json = await res.json().catch(() => ({}));
       if (!res.ok) {
-        setToast(json?.message || "Failed to load SMS balance");
+        if (res.status === 401) {
+          router.replace("/login");
+          return;
+        }
+
+        if (!opts?.silent) setToast(json?.message || "Failed to load SMS balance");
         setBalance(null);
         return;
       }
@@ -195,7 +203,7 @@ export default function SmsDashboardPage() {
     }
   };
 
-  const loadTills = async () => {
+  const loadTills = async (opts?: { silent?: boolean }) => {
     setTillsLoading(true);
     try {
       const url = new URL("/api/tills", window.location.origin);
@@ -207,7 +215,7 @@ export default function SmsDashboardPage() {
           router.replace("/login");
           return;
         }
-        setToast(json?.message || "Failed to load tills");
+        if (!opts?.silent) setToast(json?.message || "Failed to load tills");
         setTills([]);
         return;
       }
@@ -217,13 +225,17 @@ export default function SmsDashboardPage() {
     }
   };
 
-  const loadCampaigns = async () => {
+  const loadCampaigns = async (opts?: { silent?: boolean }) => {
     setCampaignsLoading(true);
     try {
       const res = await fetch("/api/sms/campaigns", { cache: "no-store" });
       const json = await res.json().catch(() => ({}));
       if (!res.ok) {
-        setToast(json?.message || "Failed to load campaigns");
+        if (res.status === 401) {
+          router.replace("/login");
+          return;
+        }
+        if (!opts?.silent) setToast(json?.message || "Failed to load campaigns");
         setCampaigns([]);
         return;
       }
@@ -232,6 +244,61 @@ export default function SmsDashboardPage() {
       setCampaignsLoading(false);
     }
   };
+
+  const loadCampaignDetail = useCallback(
+    async (campaignId: string, opts?: { silent?: boolean }) => {
+      setSelectedLoading(true);
+      try {
+        const res = await fetch(`/api/sms/campaigns/${campaignId}`, { cache: "no-store" });
+        const json = await res.json().catch(() => ({}));
+        if (!res.ok) {
+          if (res.status === 401) {
+            router.replace("/login");
+            return;
+          }
+          if (!opts?.silent) setToast(json?.message || "Failed to load campaign");
+          setSelectedCampaign(null);
+          setSelectedCounts(null);
+          return;
+        }
+        setSelectedCampaign(json?.campaign || null);
+        setSelectedCounts(json?.counts || null);
+      } finally {
+        setSelectedLoading(false);
+      }
+    },
+    [router]
+  );
+
+  const loadMessagesForCampaign = useCallback(
+    async (campaignId: string, opts?: { silent?: boolean }) => {
+      setMessagesLoading(true);
+      try {
+        const url = new URL(`/api/sms/campaigns/${campaignId}/messages`, window.location.origin);
+        url.searchParams.set("page", String(messagesPage));
+        url.searchParams.set("limit", String(messagesLimit));
+        if (messagesStatus) url.searchParams.set("status", messagesStatus);
+
+        const res = await fetch(url.toString(), { cache: "no-store" });
+        const json = await res.json().catch(() => ({}));
+        if (!res.ok) {
+          if (res.status === 401) {
+            router.replace("/login");
+            return;
+          }
+          if (!opts?.silent) setToast(json?.message || "Failed to load messages");
+          setMessages([]);
+          setMessagesTotal(0);
+          return;
+        }
+        setMessages((json?.messages || []) as SmsMessageRow[]);
+        setMessagesTotal(Number(json?.total || 0));
+      } finally {
+        setMessagesLoading(false);
+      }
+    },
+    [messagesLimit, messagesPage, messagesStatus, router]
+  );
 
   useEffect(() => {
     loadBalance();
@@ -248,25 +315,7 @@ export default function SmsDashboardPage() {
       return;
     }
 
-    const load = async () => {
-      setSelectedLoading(true);
-      try {
-        const res = await fetch(`/api/sms/campaigns/${selectedCampaignId}`, { cache: "no-store" });
-        const json = await res.json().catch(() => ({}));
-        if (!res.ok) {
-          setToast(json?.message || "Failed to load campaign");
-          setSelectedCampaign(null);
-          setSelectedCounts(null);
-          return;
-        }
-        setSelectedCampaign(json?.campaign || null);
-        setSelectedCounts(json?.counts || null);
-      } finally {
-        setSelectedLoading(false);
-      }
-    };
-
-    load();
+    loadCampaignDetail(selectedCampaignId);
   }, [selectedCampaignId]);
 
   const messagesKey = useMemo(
@@ -277,31 +326,31 @@ export default function SmsDashboardPage() {
   useEffect(() => {
     if (!selectedCampaignId) return;
 
-    const load = async () => {
-      setMessagesLoading(true);
-      try {
-        const url = new URL(`/api/sms/campaigns/${selectedCampaignId}/messages`, window.location.origin);
-        url.searchParams.set("page", String(messagesPage));
-        url.searchParams.set("limit", String(messagesLimit));
-        if (messagesStatus) url.searchParams.set("status", messagesStatus);
-
-        const res = await fetch(url.toString(), { cache: "no-store" });
-        const json = await res.json().catch(() => ({}));
-        if (!res.ok) {
-          setToast(json?.message || "Failed to load messages");
-          setMessages([]);
-          setMessagesTotal(0);
-          return;
-        }
-        setMessages((json?.messages || []) as SmsMessageRow[]);
-        setMessagesTotal(Number(json?.total || 0));
-      } finally {
-        setMessagesLoading(false);
-      }
-    };
-
-    load();
+    loadMessagesForCampaign(selectedCampaignId);
   }, [messagesKey]);
+
+  useEffect(() => {
+    if (!autoRefresh) return;
+    const intervalMs = Math.min(5 * 60_000, Math.max(5_000, Math.floor(Number(autoRefreshSec) || 15) * 1000));
+
+    const t = setInterval(() => {
+      loadCampaigns({ silent: true });
+      if (selectedCampaignId) {
+        loadCampaignDetail(selectedCampaignId, { silent: true });
+        loadMessagesForCampaign(selectedCampaignId, { silent: true });
+      }
+    }, intervalMs);
+
+    return () => clearInterval(t);
+  }, [autoRefresh, autoRefreshSec, loadCampaignDetail, loadMessagesForCampaign, selectedCampaignId]);
+
+  const onManualRefresh = async () => {
+    await loadCampaigns();
+    if (selectedCampaignId) {
+      await loadCampaignDetail(selectedCampaignId);
+      await loadMessagesForCampaign(selectedCampaignId);
+    }
+  };
 
   useEffect(() => {
     setMessagesPage(1);
@@ -459,8 +508,50 @@ export default function SmsDashboardPage() {
                 Explorer
               </IconButton>
 
-              <IconButton onClick={loadCampaigns} title="Refresh campaigns" disabled={campaignsLoading}>
-                <RefreshCw className={cn("h-4 w-4", campaignsLoading ? "animate-spin" : "")} />
+              <label className="inline-flex h-10 items-center gap-2 rounded-2xl border border-white/10 bg-white/5 px-4 text-sm font-semibold text-zinc-100">
+                <input
+                  type="checkbox"
+                  checked={autoRefresh}
+                  onChange={(e) => setAutoRefresh(e.target.checked)}
+                  className="h-4 w-4 accent-indigo-500"
+                />
+                Auto
+              </label>
+
+              <select
+                value={String(autoRefreshSec)}
+                onChange={(e) => setAutoRefreshSec(Number(e.target.value))}
+                disabled={!autoRefresh}
+                className="h-10 rounded-2xl border border-white/10 bg-black/30 px-4 text-sm text-zinc-100 outline-none focus:border-indigo-400/50 disabled:cursor-not-allowed disabled:opacity-60"
+              >
+                <option value="5" className="bg-black">
+                  5s
+                </option>
+                <option value="10" className="bg-black">
+                  10s
+                </option>
+                <option value="15" className="bg-black">
+                  15s
+                </option>
+                <option value="30" className="bg-black">
+                  30s
+                </option>
+                <option value="60" className="bg-black">
+                  60s
+                </option>
+              </select>
+
+              <IconButton
+                onClick={onManualRefresh}
+                title="Refresh campaigns and selected campaign"
+                disabled={campaignsLoading || selectedLoading || messagesLoading}
+              >
+                <RefreshCw
+                  className={cn(
+                    "h-4 w-4",
+                    campaignsLoading || selectedLoading || messagesLoading ? "animate-spin" : ""
+                  )}
+                />
                 Refresh
               </IconButton>
 
