@@ -300,6 +300,11 @@ export default function SmsDashboardPage() {
   const [refreshLoading, setRefreshLoading] = useState(false);
   const [refreshLimit, setRefreshLimit] = useState<string>("20");
 
+  const [testPhone, setTestPhone] = useState<string>("");
+  const [testMessage, setTestMessage] = useState<string>("");
+  const [testLoading, setTestLoading] = useState(false);
+  const [testResult, setTestResult] = useState<string>("");
+
   const [amountCategories, setAmountCategories] = useState<AmountCategory[]>([]);
 
   const [dailyDate, setDailyDate] = useState<string>("");
@@ -360,6 +365,39 @@ export default function SmsDashboardPage() {
       setBalance(typeof v === "number" ? v : v === null ? null : Number(v));
     } finally {
       setBalanceLoading(false);
+    }
+  };
+
+  const onSendTestSms = async () => {
+    setTestLoading(true);
+    setTestResult("");
+    try {
+      const res = await fetch("/api/sms/test-send", {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({
+          phone: testPhone,
+          message: testMessage,
+          senderId: formSenderId || undefined,
+        }),
+      });
+
+      const json = await res.json().catch(() => ({}));
+      if (!res.ok) {
+        if (res.status === 401) {
+          router.replace("/login");
+          return;
+        }
+        setToast(json?.message || "Failed to send test SMS");
+        return;
+      }
+
+      const msgId = String(json?.response?.messageid || "").trim();
+      const desc = String(json?.response?.["response-description"] || "").trim();
+      setToast("Test SMS sent");
+      setTestResult(`Sent to ${json?.phone?.local || ""}${msgId ? ` · id ${msgId}` : ""}${desc ? ` · ${desc}` : ""}`);
+    } finally {
+      setTestLoading(false);
     }
   };
 
@@ -1183,6 +1221,61 @@ export default function SmsDashboardPage() {
                     />
                     <div className="mt-1 text-xs text-zinc-500">{formMessage.length}/1000</div>
                   </label>
+
+                  <div className="rounded-3xl border border-white/10 bg-black/20 p-4">
+                    <div className="flex items-center justify-between gap-3">
+                      <div>
+                        <div className="text-sm font-semibold text-zinc-100">Test SMS</div>
+                        <div className="mt-1 text-xs text-zinc-400">Send one SMS to preview how it looks on your phone.</div>
+                      </div>
+                      <button
+                        type="button"
+                        onClick={() => setTestMessage(formMessage)}
+                        className="h-9 rounded-2xl border border-white/10 bg-white/5 px-3 text-xs font-semibold text-zinc-100 transition hover:bg-white/10"
+                        title="Copy campaign message"
+                      >
+                        Use message
+                      </button>
+                    </div>
+
+                    <div className="mt-3 grid grid-cols-1 gap-3">
+                      <label className="block">
+                        <span className="mb-2 block text-[11px] font-bold uppercase tracking-wider text-zinc-400">Phone</span>
+                        <input
+                          value={testPhone}
+                          onChange={(e) => setTestPhone(e.target.value)}
+                          placeholder="e.g. 0700123456 or 254700123456"
+                          className="h-11 w-full rounded-2xl border border-white/10 bg-black/30 px-4 text-sm text-zinc-100 outline-none placeholder:text-zinc-500 focus:border-indigo-400/50"
+                        />
+                      </label>
+
+                      <label className="block">
+                        <span className="mb-2 block text-[11px] font-bold uppercase tracking-wider text-zinc-400">Message</span>
+                        <textarea
+                          value={testMessage}
+                          onChange={(e) => setTestMessage(e.target.value)}
+                          rows={3}
+                          placeholder="Write your test SMS message…"
+                          className="w-full resize-none rounded-2xl border border-white/10 bg-black/30 px-4 py-3 text-sm text-zinc-100 outline-none placeholder:text-zinc-500 focus:border-indigo-400/50"
+                        />
+                        <div className="mt-1 text-xs text-zinc-500">{testMessage.length}/1000</div>
+                      </label>
+
+                      <button
+                        type="button"
+                        disabled={testLoading || !testPhone.trim() || !testMessage.trim()}
+                        onClick={onSendTestSms}
+                        className={cn(
+                          "inline-flex h-11 w-full items-center justify-center gap-2 rounded-2xl border border-white/10 bg-white/5 px-4 text-sm font-semibold text-zinc-100 transition hover:bg-white/10 disabled:cursor-not-allowed disabled:opacity-60"
+                        )}
+                      >
+                        {testLoading ? <Loader2 className="h-4 w-4 animate-spin" /> : <MessageCircle className="h-4 w-4" />}
+                        {testLoading ? "Sending…" : "Send test"}
+                      </button>
+
+                      {testResult ? <div className="text-xs text-emerald-200/80">{testResult}</div> : null}
+                    </div>
+                  </div>
 
                   <div className="mt-3 grid grid-cols-1 gap-3 rounded-3xl border border-white/10 bg-black/20 p-4">
                     <label className="block">
