@@ -179,6 +179,7 @@ type CampaignCounts = {
 type SmsMessageRow = {
   id: string;
   created_at: string;
+  campaign_id?: string | null;
   phone: string;
   phone_normalized: string;
   tx_id: string | null;
@@ -188,6 +189,15 @@ type SmsMessageRow = {
   flux_message_id: string | null;
   delivery_status_text: string | null;
   delivery_status_code: number | null;
+};
+
+type GlobalMessagesResponse = {
+  status: string;
+  page: number;
+  limit: number;
+  total: number;
+  messages: SmsMessageRow[];
+  campaignsById?: Record<string, { id: string; name: string | null }>;
 };
 
 function StatusPill({ value }: { value: string }) {
@@ -273,6 +283,15 @@ export default function SmsDashboardPage() {
   const [messagesPage, setMessagesPage] = useState(1);
   const [messagesLimit] = useState(50);
   const [messagesStatus, setMessagesStatus] = useState<string>("");
+
+  const [globalMessages, setGlobalMessages] = useState<SmsMessageRow[]>([]);
+  const [globalMessagesTotal, setGlobalMessagesTotal] = useState(0);
+  const [globalMessagesLoading, setGlobalMessagesLoading] = useState(false);
+  const [globalMessagesPage, setGlobalMessagesPage] = useState(1);
+  const [globalMessagesLimit] = useState(50);
+  const [globalMessagesStatus, setGlobalMessagesStatus] = useState<string>("");
+  const [globalMessagesSearch, setGlobalMessagesSearch] = useState<string>("");
+  const [globalCampaignsById, setGlobalCampaignsById] = useState<Record<string, { id: string; name: string | null }>>({});
 
   const [formName, setFormName] = useState<string>("");
   const [formSenderId, setFormSenderId] = useState<string>("fluxsms");
@@ -531,6 +550,40 @@ export default function SmsDashboardPage() {
     [router]
   );
 
+  const loadGlobalMessages = useCallback(
+    async (opts?: { silent?: boolean }) => {
+      setGlobalMessagesLoading(true);
+      try {
+        const url = new URL("/api/sms/messages", window.location.origin);
+        url.searchParams.set("page", String(globalMessagesPage));
+        url.searchParams.set("limit", String(globalMessagesLimit));
+        if (globalMessagesStatus) url.searchParams.set("status", globalMessagesStatus);
+        if (globalMessagesSearch.trim()) url.searchParams.set("search", globalMessagesSearch.trim());
+
+        const res = await fetch(url.toString(), { cache: "no-store" });
+        const json = (await res.json().catch(() => ({}))) as Partial<GlobalMessagesResponse>;
+        if (!res.ok) {
+          if (res.status === 401) {
+            router.replace("/login");
+            return;
+          }
+          if (!opts?.silent) setToast((json as any)?.message || "Failed to load history");
+          setGlobalMessages([]);
+          setGlobalMessagesTotal(0);
+          setGlobalCampaignsById({});
+          return;
+        }
+
+        setGlobalMessages(((json as any)?.messages || []) as SmsMessageRow[]);
+        setGlobalMessagesTotal(Number((json as any)?.total || 0));
+        setGlobalCampaignsById((((json as any)?.campaignsById || {}) as any) || {});
+      } finally {
+        setGlobalMessagesLoading(false);
+      }
+    },
+    [globalMessagesLimit, globalMessagesPage, globalMessagesSearch, globalMessagesStatus, router]
+  );
+
   const loadMessagesForCampaign = useCallback(
     async (campaignId: string, opts?: { silent?: boolean }) => {
       setMessagesLoading(true);
@@ -774,6 +827,11 @@ export default function SmsDashboardPage() {
     [selectedCampaignId, messagesPage, messagesLimit, messagesStatus]
   );
 
+  const globalMessagesKey = useMemo(
+    () => JSON.stringify({ globalMessagesPage, globalMessagesLimit, globalMessagesStatus, globalMessagesSearch }),
+    [globalMessagesLimit, globalMessagesPage, globalMessagesSearch, globalMessagesStatus]
+  );
+
   useEffect(() => {
     if (!selectedCampaignId) return;
 
@@ -781,11 +839,16 @@ export default function SmsDashboardPage() {
   }, [messagesKey]);
 
   useEffect(() => {
+    loadGlobalMessages();
+  }, [globalMessagesKey]);
+
+  useEffect(() => {
     if (!autoRefresh) return;
     const intervalMs = Math.min(5 * 60_000, Math.max(5_000, Math.floor(Number(autoRefreshSec) || 15) * 1000));
 
     const t = setInterval(() => {
       loadCampaigns({ silent: true });
+      loadGlobalMessages({ silent: true });
       if (selectedCampaignId) {
         loadCampaignDetail(selectedCampaignId, { silent: true });
         loadMessagesForCampaign(selectedCampaignId, { silent: true });
@@ -793,7 +856,7 @@ export default function SmsDashboardPage() {
     }, intervalMs);
 
     return () => clearInterval(t);
-  }, [autoRefresh, autoRefreshSec, loadCampaignDetail, loadMessagesForCampaign, selectedCampaignId]);
+  }, [autoRefresh, autoRefreshSec, loadCampaignDetail, loadGlobalMessages, loadMessagesForCampaign, loadCampaigns, selectedCampaignId]);
 
   const onManualRefresh = async () => {
     await loadCampaigns();
@@ -801,11 +864,16 @@ export default function SmsDashboardPage() {
       await loadCampaignDetail(selectedCampaignId);
       await loadMessagesForCampaign(selectedCampaignId);
     }
+    await loadGlobalMessages();
   };
 
   useEffect(() => {
     setMessagesPage(1);
   }, [selectedCampaignId, messagesStatus]);
+
+  useEffect(() => {
+    setGlobalMessagesPage(1);
+  }, [globalMessagesStatus, globalMessagesSearch]);
 
   const onSignOut = async () => {
     if (!supabase) {
@@ -923,6 +991,11 @@ export default function SmsDashboardPage() {
   const selectedCampaignRow = useMemo(
     () => campaigns.find((c) => c.id === selectedCampaignId) || null,
     [campaigns, selectedCampaignId]
+  );
+
+  const totalGlobalMessagePages = useMemo(
+    () => Math.max(1, Math.ceil(globalMessagesTotal / globalMessagesLimit)),
+    [globalMessagesLimit, globalMessagesTotal]
   );
 
   const totalMessagePages = Math.max(1, Math.ceil(messagesTotal / messagesLimit));
@@ -1723,7 +1796,120 @@ export default function SmsDashboardPage() {
               </div>
             </div>
 
-            <div className="lg:col-span-8">
+            <div className="lg:col-span-8 space-y-6">
+              <div className="rounded-3xl border border-white/10 bg-white/5 p-6 backdrop-blur-xl">
+                <div className="flex flex-col gap-4 md:flex-row md:items-center md:justify-between">
+                  <div>
+                    <h2 className="text-sm font-semibold text-zinc-100">All messages</h2>
+                    <p className="mt-1 text-xs text-zinc-400">Full history across campaigns.</p>
+                  </div>
+
+                  <div className="flex flex-wrap items-center gap-2">
+                    <select
+                      value={globalMessagesStatus}
+                      onChange={(e) => setGlobalMessagesStatus(e.target.value)}
+                      className="h-10 rounded-2xl border border-white/10 bg-black/30 px-4 text-sm text-zinc-100 outline-none focus:border-indigo-400/50"
+                    >
+                      <option value="" className="bg-black">
+                        All
+                      </option>
+                      <option value="queued" className="bg-black">
+                        queued
+                      </option>
+                      <option value="sent" className="bg-black">
+                        sent
+                      </option>
+                      <option value="delivered" className="bg-black">
+                        delivered
+                      </option>
+                      <option value="failed" className="bg-black">
+                        failed
+                      </option>
+                    </select>
+
+                    <input
+                      value={globalMessagesSearch}
+                      onChange={(e) => setGlobalMessagesSearch(e.target.value)}
+                      placeholder="Phone or message id"
+                      className="h-10 w-56 rounded-2xl border border-white/10 bg-black/30 px-4 text-sm text-zinc-100 outline-none placeholder:text-zinc-500 focus:border-indigo-400/50"
+                    />
+
+                    <div className="text-xs text-zinc-400">
+                      {globalMessagesLoading ? "Loading…" : `${globalMessagesTotal} total`}
+                    </div>
+                  </div>
+                </div>
+
+                <div className="mt-4 overflow-hidden rounded-3xl border border-white/10">
+                  <div className="grid grid-cols-12 gap-2 border-b border-white/10 bg-black/30 px-4 py-3 text-[11px] font-bold uppercase tracking-wider text-zinc-400">
+                    <div className="col-span-3">Campaign</div>
+                    <div className="col-span-3">Phone</div>
+                    <div className="col-span-2">Status</div>
+                    <div className="col-span-2">Delivery</div>
+                    <div className="col-span-2">Created</div>
+                  </div>
+
+                  {globalMessages.length === 0 && !globalMessagesLoading && (
+                    <div className="bg-black/20 px-4 py-6 text-sm text-zinc-300">No messages found.</div>
+                  )}
+
+                  {globalMessages.map((m) => {
+                    const campaignId = String((m as any)?.campaign_id || "");
+                    const campaignName = campaignId ? (globalCampaignsById[campaignId]?.name || "Untitled") : "—";
+                    return (
+                      <button
+                        key={m.id}
+                        type="button"
+                        onClick={() => {
+                          if (campaignId) setSelectedCampaignId(campaignId);
+                        }}
+                        className="grid w-full grid-cols-12 gap-2 border-b border-white/5 bg-black/20 px-4 py-3 text-left text-sm text-zinc-100 transition hover:bg-white/5"
+                        title={campaignId ? "Open campaign" : ""}
+                      >
+                        <div className="col-span-3">
+                          <div className="truncate font-semibold text-zinc-100">{campaignName}</div>
+                          <div className="mt-1 truncate text-[11px] text-zinc-500">{campaignId ? campaignId.slice(0, 8) : ""}</div>
+                        </div>
+                        <div className="col-span-3 font-medium text-zinc-100">{m.phone}</div>
+                        <div className="col-span-2">
+                          <StatusPill value={m.status} />
+                        </div>
+                        <div className="col-span-2 text-xs text-zinc-300">
+                          <div className="truncate">{m.delivery_status_text || "—"}</div>
+                          <div className="mt-1 text-[11px] text-zinc-500">{m.flux_message_id || ""}</div>
+                        </div>
+                        <div className="col-span-2 text-xs text-zinc-300">{formatDateTime(m.created_at)}</div>
+                      </button>
+                    );
+                  })}
+                </div>
+
+                <div className="mt-4 flex flex-wrap items-center justify-between gap-3">
+                  <div className="text-xs text-zinc-400">
+                    Page {globalMessagesPage} of {totalGlobalMessagePages}
+                  </div>
+
+                  <div className="flex items-center gap-2">
+                    <button
+                      type="button"
+                      disabled={globalMessagesPage <= 1}
+                      onClick={() => setGlobalMessagesPage((p) => Math.max(1, p - 1))}
+                      className="h-10 rounded-2xl border border-white/10 bg-white/5 px-4 text-sm font-semibold text-zinc-100 transition hover:bg-white/10 disabled:cursor-not-allowed disabled:opacity-60"
+                    >
+                      Prev
+                    </button>
+                    <button
+                      type="button"
+                      disabled={globalMessagesPage >= totalGlobalMessagePages}
+                      onClick={() => setGlobalMessagesPage((p) => Math.min(totalGlobalMessagePages, p + 1))}
+                      className="h-10 rounded-2xl border border-white/10 bg-white/5 px-4 text-sm font-semibold text-zinc-100 transition hover:bg-white/10 disabled:cursor-not-allowed disabled:opacity-60"
+                    >
+                      Next
+                    </button>
+                  </div>
+                </div>
+              </div>
+
               <div className="rounded-3xl border border-white/10 bg-white/5 p-6 backdrop-blur-xl">
                 <div className="flex flex-col gap-4 md:flex-row md:items-start md:justify-between">
                   <div>
@@ -1792,6 +1978,22 @@ export default function SmsDashboardPage() {
                           <Field
                             label="Created"
                             value={formatDateTime(String(selectedCampaign?.created_at || selectedCampaignRow?.created_at || ""))}
+                          />
+                          <Field
+                            label="Last dispatch"
+                            value={
+                              selectedCampaign?.last_dispatch_at || selectedCampaignRow?.last_dispatch_at
+                                ? formatDateTime(String(selectedCampaign?.last_dispatch_at || selectedCampaignRow?.last_dispatch_at || ""))
+                                : "—"
+                            }
+                          />
+                          <Field
+                            label="Last refresh"
+                            value={
+                              selectedCampaign?.last_refresh_at || selectedCampaignRow?.last_refresh_at
+                                ? formatDateTime(String(selectedCampaign?.last_refresh_at || selectedCampaignRow?.last_refresh_at || ""))
+                                : "—"
+                            }
                           />
                           <Field label="Sender" value={String(selectedCampaign?.sender_id || selectedCampaignRow?.sender_id || "fluxsms")} />
                         </div>
