@@ -18,6 +18,85 @@ import { createSupabaseBrowserClient } from "@/lib/supabase/browser";
 import { cn } from "@/lib/utils";
 import { formatDateTime, formatMoney } from "@/lib/format";
 
+type AmountCategory = {
+  amount: number;
+  count: number;
+};
+
+type AmountCoverageRow = {
+  amount: number;
+  tx_count: number;
+  recipients_total: number;
+  recipients_new: number;
+  recipients_messaged: number;
+};
+
+type SegmentStatusBreakdown = {
+  total: number;
+  success: number;
+  failed: number;
+  pending: number;
+};
+
+type SegmentCoverage = {
+  recipients_total: number;
+  recipients_messaged: number;
+  recipients_new: number;
+  recipients_delivered: number;
+  recipients_failed_only: number;
+  recipients_sent_only: number;
+};
+
+type SegmentPreview = {
+  total_transactions: number;
+  recipients_total: number;
+  coverage?: SegmentCoverage;
+  amountCoverage?: AmountCoverageRow[];
+};
+
+function AmountChip({
+  active,
+  amount,
+  txCount,
+  newCount,
+  onClick,
+}: {
+  active: boolean;
+  amount: number;
+  txCount: number;
+  newCount: number;
+  onClick: () => void;
+}) {
+  return (
+    <button
+      type="button"
+      onClick={onClick}
+      className={cn(
+        "group inline-flex items-center gap-2 rounded-2xl border px-3 py-2 text-sm font-semibold transition",
+        active
+          ? "border-indigo-400/40 bg-indigo-500/15 text-indigo-100 ring-1 ring-indigo-400/30"
+          : "border-white/10 bg-white/5 text-zinc-100 hover:bg-white/10"
+      )}
+    >
+      <span className="tabular-nums">{formatMoney(amount)}</span>
+      <span className="rounded-full border border-white/10 bg-black/20 px-2 py-0.5 text-[11px] font-bold text-zinc-200">
+        {txCount}
+      </span>
+      <span
+        className={cn(
+          "rounded-full border px-2 py-0.5 text-[11px] font-bold tabular-nums",
+          newCount > 0
+            ? "border-emerald-500/30 bg-emerald-500/10 text-emerald-200"
+            : "border-white/10 bg-black/20 text-zinc-400"
+        )}
+        title="Recipients with no previous SMS messages"
+      >
+        new {newCount}
+      </span>
+    </button>
+  );
+}
+
 type Till = {
   id: string;
   till_name: string;
@@ -159,6 +238,12 @@ export default function SmsDashboardPage() {
   const [segSearch, setSegSearch] = useState<string>("");
   const [maxScan, setMaxScan] = useState<string>("10000");
 
+  const [segmentBreakdown, setSegmentBreakdown] = useState<SegmentStatusBreakdown | null>(null);
+  const [segmentBasePreview, setSegmentBasePreview] = useState<SegmentPreview | null>(null);
+  const [segmentPreview, setSegmentPreview] = useState<SegmentPreview | null>(null);
+  const [segmentPreviewLoading, setSegmentPreviewLoading] = useState(false);
+  const [showOnlyNewAmounts, setShowOnlyNewAmounts] = useState(false);
+
   const [createLoading, setCreateLoading] = useState(false);
 
   const [dispatchLoading, setDispatchLoading] = useState(false);
@@ -166,6 +251,8 @@ export default function SmsDashboardPage() {
 
   const [refreshLoading, setRefreshLoading] = useState(false);
   const [refreshLimit, setRefreshLimit] = useState<string>("20");
+
+  const [amountCategories, setAmountCategories] = useState<AmountCategory[]>([]);
 
   useEffect(() => {
     try {
@@ -305,6 +392,132 @@ export default function SmsDashboardPage() {
     loadTills();
     loadCampaigns();
   }, []);
+
+  useEffect(() => {
+    const load = async () => {
+      try {
+        const url = new URL("/api/amount-categories", window.location.origin);
+        if (segTillId) url.searchParams.set("tillId", segTillId);
+        if (segStatus) url.searchParams.set("status", segStatus);
+        if (segStartDate) url.searchParams.set("startDate", segStartDate);
+        if (segEndDate) url.searchParams.set("endDate", segEndDate);
+
+        const res = await fetch(url.toString(), { cache: "no-store" });
+        const json = await res.json().catch(() => ({}));
+        if (!res.ok) {
+          setAmountCategories([]);
+          return;
+        }
+        setAmountCategories((json?.categories || []) as AmountCategory[]);
+      } catch {
+        setAmountCategories([]);
+      }
+    };
+
+    load();
+  }, [segTillId, segStatus, segStartDate, segEndDate]);
+
+  const basePreviewKey = useMemo(
+    () =>
+      JSON.stringify({
+        segTillId,
+        segStatus,
+        segStartDate,
+        segEndDate,
+        segSearch,
+        maxScan,
+      }),
+    [segTillId, segStatus, segStartDate, segEndDate, segSearch, maxScan]
+  );
+
+  const previewKey = useMemo(
+    () =>
+      JSON.stringify({
+        segTillId,
+        segStatus,
+        segStartDate,
+        segEndDate,
+        segSearch,
+        segAmount,
+        maxScan,
+      }),
+    [segTillId, segStatus, segStartDate, segEndDate, segSearch, segAmount, maxScan]
+  );
+
+  const loadSegmentPreview = useCallback(
+    async (opts?: { silent?: boolean }) => {
+      setSegmentPreviewLoading(true);
+      try {
+        const max = Number(maxScan || 10000);
+
+        const baseBody = {
+          segment: {
+            tillId: segTillId || undefined,
+            status: segStatus || undefined,
+            startDate: segStartDate || undefined,
+            endDate: segEndDate || undefined,
+            search: segSearch || undefined,
+          },
+          maxScan: Number.isFinite(max) ? max : 10000,
+          includeStatusBreakdown: true,
+        };
+
+        const baseRes = await fetch("/api/sms/preview", {
+          method: "POST",
+          headers: { "content-type": "application/json" },
+          body: JSON.stringify(baseBody),
+        });
+        const baseJson = await baseRes.json().catch(() => ({}));
+        if (!baseRes.ok) {
+          if (!opts?.silent) setToast(baseJson?.message || "Failed to load segment preview");
+          setSegmentBreakdown(null);
+          setSegmentBasePreview(null);
+          setSegmentPreview(null);
+          return;
+        }
+
+        setSegmentBreakdown((baseJson?.statusBreakdown || null) as any);
+        setSegmentBasePreview((baseJson?.preview || null) as any);
+
+        const amountValue = segAmount.trim();
+        const amountNum = amountValue ? Number(amountValue) : undefined;
+        const includeAmount = amountValue && Number.isFinite(amountNum);
+
+        if (!includeAmount) {
+          setSegmentPreview((baseJson?.preview || null) as any);
+          return;
+        }
+
+        const res = await fetch("/api/sms/preview", {
+          method: "POST",
+          headers: { "content-type": "application/json" },
+          body: JSON.stringify({
+            ...baseBody,
+            segment: {
+              ...baseBody.segment,
+              amount: amountNum,
+            },
+          }),
+        });
+
+        const json = await res.json().catch(() => ({}));
+        if (!res.ok) {
+          if (!opts?.silent) setToast(json?.message || "Failed to load segment preview");
+          setSegmentPreview((baseJson?.preview || null) as any);
+          return;
+        }
+
+        setSegmentPreview((json?.preview || null) as any);
+      } finally {
+        setSegmentPreviewLoading(false);
+      }
+    },
+    [maxScan, segAmount, segEndDate, segSearch, segStartDate, segStatus, segTillId]
+  );
+
+  useEffect(() => {
+    loadSegmentPreview({ silent: true });
+  }, [basePreviewKey, previewKey, loadSegmentPreview]);
 
   useEffect(() => {
     if (!selectedCampaignId) {
@@ -574,6 +787,171 @@ export default function SmsDashboardPage() {
                 </div>
 
                 <div className="mt-4 grid grid-cols-1 gap-3">
+                  <div className="rounded-3xl border border-white/10 bg-black/20 p-4">
+                    <div className="flex items-center justify-between gap-3">
+                      <div>
+                        <div className="text-sm font-semibold text-zinc-100">Segment insights</div>
+                        <div className="mt-1 text-xs text-zinc-400">Unique recipients, new vs messaged, and amount chips.</div>
+                      </div>
+                      <div className="text-xs text-zinc-400">
+                        {segmentPreviewLoading ? "Updating…" : segmentPreview ? "Ready" : "—"}
+                      </div>
+                    </div>
+
+                    {segmentBreakdown && (
+                      <div className="mt-4 grid grid-cols-4 gap-2">
+                        <button
+                          type="button"
+                          onClick={() => setSegStatus("")}
+                          className={cn(
+                            "rounded-2xl border border-white/10 bg-black/30 p-3 text-left transition hover:bg-white/5",
+                            !segStatus ? "ring-1 ring-indigo-400/30" : ""
+                          )}
+                          title="Show all statuses"
+                        >
+                          <div className="text-[10px] font-bold uppercase tracking-wider text-zinc-500">All</div>
+                          <div className="mt-1 text-lg font-semibold text-zinc-100 tabular-nums">{segmentBreakdown.total}</div>
+                        </button>
+                        <button
+                          type="button"
+                          onClick={() => setSegStatus("success")}
+                          className={cn(
+                            "rounded-2xl border border-emerald-500/20 bg-emerald-500/5 p-3 text-left transition hover:bg-emerald-500/10",
+                            segStatus === "success" ? "ring-1 ring-emerald-400/30" : ""
+                          )}
+                          title="Target successful transactions"
+                        >
+                          <div className="text-[10px] font-bold uppercase tracking-wider text-emerald-300/80">Success</div>
+                          <div className="mt-1 text-lg font-semibold text-emerald-100 tabular-nums">{segmentBreakdown.success}</div>
+                        </button>
+                        <button
+                          type="button"
+                          onClick={() => setSegStatus("failed")}
+                          className={cn(
+                            "rounded-2xl border border-rose-500/20 bg-rose-500/5 p-3 text-left transition hover:bg-rose-500/10",
+                            segStatus === "failed" ? "ring-1 ring-rose-400/30" : ""
+                          )}
+                          title="Target failed transactions"
+                        >
+                          <div className="text-[10px] font-bold uppercase tracking-wider text-rose-300/80">Failed</div>
+                          <div className="mt-1 text-lg font-semibold text-rose-100 tabular-nums">{segmentBreakdown.failed}</div>
+                        </button>
+                        <button
+                          type="button"
+                          onClick={() => setSegStatus("pending")}
+                          className={cn(
+                            "rounded-2xl border border-amber-500/20 bg-amber-500/5 p-3 text-left transition hover:bg-amber-500/10",
+                            segStatus === "pending" ? "ring-1 ring-amber-400/30" : ""
+                          )}
+                          title="Target pending transactions"
+                        >
+                          <div className="text-[10px] font-bold uppercase tracking-wider text-amber-300/80">Pending</div>
+                          <div className="mt-1 text-lg font-semibold text-amber-100 tabular-nums">{segmentBreakdown.pending}</div>
+                        </button>
+                      </div>
+                    )}
+
+                    {segmentPreview?.coverage && (
+                      <div className="mt-4 grid grid-cols-2 gap-2">
+                        <div className="rounded-2xl border border-white/10 bg-black/30 p-3">
+                          <div className="text-[10px] font-bold uppercase tracking-wider text-zinc-500">Recipients</div>
+                          <div className="mt-1 text-lg font-semibold text-zinc-100 tabular-nums">{segmentPreview.recipients_total}</div>
+                          <div className="mt-2 text-xs text-zinc-400 tabular-nums">Tx: {segmentPreview.total_transactions}</div>
+                        </div>
+                        <div className="rounded-2xl border border-emerald-500/20 bg-emerald-500/5 p-3">
+                          <div className="text-[10px] font-bold uppercase tracking-wider text-emerald-300/80">New (no SMS yet)</div>
+                          <div className="mt-1 text-lg font-semibold text-emerald-100 tabular-nums">
+                            {segmentPreview.coverage.recipients_new}
+                          </div>
+                          <div className="mt-2 text-xs text-emerald-200/70 tabular-nums">
+                            Messaged: {segmentPreview.coverage.recipients_messaged}
+                          </div>
+                        </div>
+                        <div className="rounded-2xl border border-indigo-500/20 bg-indigo-500/5 p-3">
+                          <div className="text-[10px] font-bold uppercase tracking-wider text-indigo-300/80">Delivered</div>
+                          <div className="mt-1 text-lg font-semibold text-indigo-100 tabular-nums">
+                            {segmentPreview.coverage.recipients_delivered}
+                          </div>
+                          <div className="mt-2 text-xs text-indigo-200/70 tabular-nums">
+                            Sent only: {segmentPreview.coverage.recipients_sent_only}
+                          </div>
+                        </div>
+                        <div className="rounded-2xl border border-rose-500/20 bg-rose-500/5 p-3">
+                          <div className="text-[10px] font-bold uppercase tracking-wider text-rose-300/80">Not received</div>
+                          <div className="mt-1 text-lg font-semibold text-rose-100 tabular-nums">
+                            {segmentPreview.coverage.recipients_failed_only}
+                          </div>
+                          <div className="mt-2 text-xs text-rose-200/70">Failed only</div>
+                        </div>
+                      </div>
+                    )}
+
+                    <div className="mt-4 flex items-center justify-between gap-3">
+                      <div className="text-xs font-semibold text-zinc-200">Unique amounts</div>
+                      <label className="inline-flex items-center gap-2 text-xs text-zinc-300">
+                        <input
+                          type="checkbox"
+                          checked={showOnlyNewAmounts}
+                          onChange={(e) => setShowOnlyNewAmounts(e.target.checked)}
+                          className="h-4 w-4 accent-emerald-500"
+                        />
+                        Show only with new
+                      </label>
+                    </div>
+
+                    <div className="mt-3 flex max-h-[220px] flex-wrap gap-2 overflow-auto pr-1">
+                      <button
+                        type="button"
+                        onClick={() => setSegAmount("")}
+                        className={cn(
+                          "inline-flex items-center gap-2 rounded-2xl border px-3 py-2 text-sm font-semibold transition",
+                          !segAmount.trim()
+                            ? "border-indigo-400/40 bg-indigo-500/15 text-indigo-100 ring-1 ring-indigo-400/30"
+                            : "border-white/10 bg-white/5 text-zinc-100 hover:bg-white/10"
+                        )}
+                        title="All amounts"
+                      >
+                        All amounts
+                      </button>
+
+                      {(segmentBasePreview?.amountCoverage || [])
+                        .filter((r) => (showOnlyNewAmounts ? (r.recipients_new || 0) > 0 : true))
+                        .slice(0, 60)
+                        .map((r) => (
+                          <AmountChip
+                            key={r.amount}
+                            active={String(r.amount) === segAmount.trim()}
+                            amount={r.amount}
+                            txCount={r.tx_count}
+                            newCount={r.recipients_new || 0}
+                            onClick={() => setSegAmount(String(r.amount))}
+                          />
+                        ))}
+                    </div>
+
+                    {amountCategories.length > 0 && (
+                      <div className="mt-4 rounded-2xl border border-white/10 bg-black/30 p-3">
+                        <div className="text-[11px] font-bold uppercase tracking-wider text-zinc-500">More amounts (fast list)</div>
+                        <div className="mt-2 flex flex-wrap gap-2">
+                          {amountCategories.slice(0, 20).map((c) => (
+                            <button
+                              key={c.amount}
+                              type="button"
+                              onClick={() => setSegAmount(String(c.amount))}
+                              className={cn(
+                                "rounded-2xl border border-white/10 bg-white/5 px-3 py-2 text-xs font-semibold text-zinc-100 transition hover:bg-white/10",
+                                segAmount.trim() === String(c.amount) ? "ring-1 ring-indigo-400/30" : ""
+                              )}
+                              title={`${c.count} tx`}
+                            >
+                              {formatMoney(c.amount)}
+                            </button>
+                          ))}
+                        </div>
+                      </div>
+                    )}
+                  </div>
+
                   <label className="block">
                     <span className="mb-2 block text-[11px] font-bold uppercase tracking-wider text-zinc-400">Name</span>
                     <input
