@@ -269,7 +269,7 @@ export default function SmsDashboardPage() {
   const [segEndDate, setSegEndDate] = useState<string>("");
   const [segAmount, setSegAmount] = useState<string>("");
   const [segSearch, setSegSearch] = useState<string>("");
-  const [maxScan, setMaxScan] = useState<string>("10000");
+  const [maxScan, setMaxScan] = useState<string>("50000");
 
   const [segmentBreakdown, setSegmentBreakdown] = useState<SegmentStatusBreakdown | null>(null);
   const [segmentBasePreview, setSegmentBasePreview] = useState<SegmentPreview | null>(null);
@@ -627,7 +627,7 @@ export default function SmsDashboardPage() {
     async (opts?: { silent?: boolean }) => {
       setSegmentPreviewLoading(true);
       try {
-        const max = Number(maxScan || 10000);
+        const max = Number(maxScan || 50000);
 
         const baseBody = {
           segment: {
@@ -637,7 +637,7 @@ export default function SmsDashboardPage() {
             endDate: segEndDate || undefined,
             search: segSearch || undefined,
           },
-          maxScan: Number.isFinite(max) ? max : 10000,
+          maxScan: Number.isFinite(max) ? max : 50000,
           includeStatusBreakdown: true,
         };
 
@@ -649,9 +649,9 @@ export default function SmsDashboardPage() {
         const baseJson = await baseRes.json().catch(() => ({}));
         if (!baseRes.ok) {
           if (!opts?.silent) setToast(baseJson?.message || "Failed to load segment preview");
-          setSegmentBreakdown(null);
-          setSegmentBasePreview(null);
-          setSegmentPreview(null);
+          if (baseJson?.statusBreakdown) {
+            setSegmentBreakdown((baseJson.statusBreakdown || null) as any);
+          }
           return;
         }
 
@@ -682,6 +682,9 @@ export default function SmsDashboardPage() {
         const json = await res.json().catch(() => ({}));
         if (!res.ok) {
           if (!opts?.silent) setToast(json?.message || "Failed to load segment preview");
+          if (json?.statusBreakdown) {
+            setSegmentBreakdown((json.statusBreakdown || baseJson?.statusBreakdown || null) as any);
+          }
           setSegmentPreview((baseJson?.preview || null) as any);
           return;
         }

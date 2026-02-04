@@ -238,7 +238,23 @@ export async function POST(req: Request) {
   }
 
   if (totalMatching === 0) {
-    return NextResponse.json({ status: "success", preview: { total_transactions: 0, recipients_total: 0 }, statusBreakdown });
+    return NextResponse.json({
+      status: "success",
+      preview: {
+        total_transactions: 0,
+        recipients_total: 0,
+        coverage: {
+          recipients_total: 0,
+          recipients_messaged: 0,
+          recipients_new: 0,
+          recipients_delivered: 0,
+          recipients_failed_only: 0,
+          recipients_sent_only: 0,
+        },
+        amountCoverage: [],
+      },
+      statusBreakdown,
+    });
   }
 
   if (totalMatching > maxScan) {
