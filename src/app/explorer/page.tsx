@@ -323,6 +323,15 @@ export default function ExplorerPage() {
             </div>
 
             <div className="flex flex-wrap items-center gap-3">
+              <IconButton
+                onClick={() => {
+                  router.push("/sms");
+                }}
+                title="Open SMS dashboard"
+              >
+                <MessageCircle className="h-4 w-4" />
+                SMS Dashboard
+              </IconButton>
               <IconButton onClick={onSignOut} title="Sign out">
                 <LogOut className="h-4 w-4" />
                 Sign out
