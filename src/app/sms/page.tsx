@@ -54,6 +54,39 @@ type SegmentPreview = {
   amountCoverage?: AmountCoverageRow[];
 };
 
+type DailyRecipientRow = {
+  phone_e164: string;
+  phone_local: string;
+  last_tx_at: string;
+  tx_count: number;
+  success_count: number;
+  failed_count: number;
+  pending_count: number;
+  amount_sum: number;
+  sms_ever_count: number;
+  sms_ever_delivered: number;
+  sms_ever_failed: number;
+  sms_ever_sent: number;
+  sms_ever_last_status: string | null;
+  sms_ever_last_at: string | null;
+  sms_day_count: number;
+  sms_day_delivered: number;
+  sms_day_failed: number;
+  sms_day_sent: number;
+  sms_day_last_status: string | null;
+  sms_day_last_at: string | null;
+};
+
+type DailyRecipientsSummary = {
+  totalTx: number;
+  txSuccess: number;
+  txFailed: number;
+  txPending: number;
+  recipients: number;
+  recipientsMessagedEver: number;
+  recipientsNewEver: number;
+};
+
 function AmountChip({
   active,
   amount,
@@ -254,6 +287,20 @@ export default function SmsDashboardPage() {
 
   const [amountCategories, setAmountCategories] = useState<AmountCategory[]>([]);
 
+  const [dailyDate, setDailyDate] = useState<string>("");
+  const [dailyStatus, setDailyStatus] = useState<string>("success");
+  const [dailyTillId, setDailyTillId] = useState<string>("");
+  const [dailyAmount, setDailyAmount] = useState<string>("");
+  const [dailySearch, setDailySearch] = useState<string>("");
+  const [dailyRows, setDailyRows] = useState<DailyRecipientRow[]>([]);
+  const [dailyTotal, setDailyTotal] = useState(0);
+  const [dailySummary, setDailySummary] = useState<DailyRecipientsSummary | null>(null);
+  const [dailyLoading, setDailyLoading] = useState(false);
+  const [dailyPage, setDailyPage] = useState(1);
+  const [dailyLimit] = useState(50);
+  const [dailySelected, setDailySelected] = useState<Record<string, true>>({});
+  const [dailyCreateLoading, setDailyCreateLoading] = useState(false);
+
   useEffect(() => {
     try {
       setSupabase(createSupabaseBrowserClient());
@@ -261,6 +308,15 @@ export default function SmsDashboardPage() {
       setToast(err?.message || "Missing Supabase environment variables");
     }
   }, []);
+
+  useEffect(() => {
+    if (dailyDate) return;
+    const d = new Date();
+    const y = d.getFullYear();
+    const m = String(d.getMonth() + 1).padStart(2, "0");
+    const day = String(d.getDate()).padStart(2, "0");
+    setDailyDate(`${y}-${m}-${day}`);
+  }, [dailyDate]);
 
   useEffect(() => {
     if (!toast) return;
@@ -287,6 +343,69 @@ export default function SmsDashboardPage() {
       setBalance(typeof v === "number" ? v : v === null ? null : Number(v));
     } finally {
       setBalanceLoading(false);
+    }
+  };
+
+  const onCreateCampaignFromDailySelection = async (opts?: { dispatch?: boolean }) => {
+    const recipients = Object.keys(dailySelected);
+    if (recipients.length === 0) {
+      setToast("Select at least one recipient");
+      return;
+    }
+
+    if (!formMessage.trim()) {
+      setToast("Message is required");
+      return;
+    }
+
+    if (recipients.length > 1000) {
+      setToast("Too many recipients selected (max 1000)");
+      return;
+    }
+
+    setDailyCreateLoading(true);
+    try {
+      const baseName = formName || `Daily ${dailyDate} ${dailyStatus || "all"}`;
+
+      const res = await fetch("/api/sms/campaigns", {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({
+          name: baseName,
+          senderId: formSenderId || undefined,
+          message: formMessage,
+          recipients,
+        }),
+      });
+
+      const json = await res.json().catch(() => ({}));
+      if (!res.ok) {
+        setToast(json?.message || "Failed to create campaign");
+        return;
+      }
+
+      const id = String(json?.campaign?.id || "");
+      setToast("Campaign created");
+      await loadCampaigns();
+      if (id) setSelectedCampaignId(id);
+
+      if (opts?.dispatch && id) {
+        const mr = Math.min(1000, Math.max(1, recipients.length));
+        const dres = await fetch(`/api/sms/campaigns/${id}/dispatch`, {
+          method: "POST",
+          headers: { "content-type": "application/json" },
+          body: JSON.stringify({ maxRecipients: mr }),
+        });
+        const djson = await dres.json().catch(() => ({}));
+        if (!dres.ok) {
+          setToast(djson?.message || "Dispatch failed");
+        } else {
+          setToast(`Dispatched ${djson?.dispatched ?? 0}`);
+        }
+        await loadCampaigns();
+      }
+    } finally {
+      setDailyCreateLoading(false);
     }
   };
 
@@ -392,6 +511,66 @@ export default function SmsDashboardPage() {
     loadTills();
     loadCampaigns();
   }, []);
+
+  const dailyKey = useMemo(
+    () =>
+      JSON.stringify({
+        dailyDate,
+        dailyStatus,
+        dailyTillId,
+        dailyAmount,
+        dailySearch,
+        dailyPage,
+        dailyLimit,
+      }),
+    [dailyAmount, dailyDate, dailyLimit, dailyPage, dailySearch, dailyStatus, dailyTillId]
+  );
+
+  useEffect(() => {
+    if (!dailyDate) return;
+    const load = async () => {
+      setDailyLoading(true);
+      try {
+        const url = new URL("/api/sms/recipients", window.location.origin);
+        url.searchParams.set("date", dailyDate);
+        url.searchParams.set("tzOffsetMin", String(new Date().getTimezoneOffset()));
+        url.searchParams.set("page", String(dailyPage));
+        url.searchParams.set("limit", String(dailyLimit));
+        if (dailyStatus) url.searchParams.set("status", dailyStatus);
+        if (dailyTillId) url.searchParams.set("tillId", dailyTillId);
+        if (dailySearch) url.searchParams.set("search", dailySearch);
+
+        const amountValue = dailyAmount.trim();
+        const amountNum = amountValue ? Number(amountValue) : undefined;
+        if (amountValue && Number.isFinite(amountNum)) {
+          url.searchParams.set("amount", String(amountNum));
+        }
+
+        const res = await fetch(url.toString(), { cache: "no-store" });
+        const json = await res.json().catch(() => ({}));
+        if (!res.ok) {
+          setDailyRows([]);
+          setDailyTotal(0);
+          setDailySummary(null);
+          setToast(json?.message || "Failed to load daily recipients");
+          return;
+        }
+
+        setDailyRows((json?.recipients || []) as DailyRecipientRow[]);
+        setDailyTotal(Number(json?.total || 0));
+        setDailySummary((json?.summary || null) as any);
+      } finally {
+        setDailyLoading(false);
+      }
+    };
+
+    load();
+  }, [dailyKey]);
+
+  useEffect(() => {
+    setDailyPage(1);
+    setDailySelected({});
+  }, [dailyDate, dailyStatus, dailyTillId, dailyAmount, dailySearch]);
 
   useEffect(() => {
     const load = async () => {
@@ -1100,6 +1279,229 @@ export default function SmsDashboardPage() {
                     {createLoading ? <Loader2 className="h-4 w-4 animate-spin" /> : <Send className="h-4 w-4" />}
                     {createLoading ? "Creating…" : "Create campaign"}
                   </button>
+                </div>
+              </div>
+
+              <div className="mt-6 rounded-3xl border border-white/10 bg-white/5 p-6 backdrop-blur-xl">
+                <div className="flex flex-col gap-4 md:flex-row md:items-center md:justify-between">
+                  <div>
+                    <h2 className="text-sm font-semibold text-zinc-100">Daily view</h2>
+                    <p className="mt-1 text-xs text-zinc-400">Pick a day, select recipients, then create & dispatch.</p>
+                  </div>
+                  <div className="flex flex-wrap items-center gap-2">
+                    <input
+                      type="date"
+                      value={dailyDate}
+                      onChange={(e) => setDailyDate(e.target.value)}
+                      className="h-10 rounded-2xl border border-white/10 bg-black/30 px-4 text-sm text-zinc-100 outline-none focus:border-indigo-400/50"
+                    />
+                    <select
+                      value={dailyStatus}
+                      onChange={(e) => setDailyStatus(e.target.value)}
+                      className="h-10 rounded-2xl border border-white/10 bg-black/30 px-4 text-sm text-zinc-100 outline-none focus:border-indigo-400/50"
+                    >
+                      <option value="" className="bg-black">
+                        all
+                      </option>
+                      <option value="success" className="bg-black">
+                        success
+                      </option>
+                      <option value="failed" className="bg-black">
+                        failed
+                      </option>
+                      <option value="pending" className="bg-black">
+                        pending
+                      </option>
+                    </select>
+                  </div>
+                </div>
+
+                <div className="mt-4 grid grid-cols-1 gap-3">
+                  <div className="grid grid-cols-2 gap-3">
+                    <label className="block">
+                      <span className="mb-2 block text-[11px] font-bold uppercase tracking-wider text-zinc-400">Till</span>
+                      <select
+                        value={dailyTillId}
+                        onChange={(e) => setDailyTillId(e.target.value)}
+                        disabled={tillsLoading || !tills.length}
+                        className="h-11 w-full rounded-2xl border border-white/10 bg-black/30 px-4 text-sm text-zinc-100 outline-none focus:border-indigo-400/50"
+                      >
+                        <option value="" className="bg-black">
+                          All
+                        </option>
+                        {tills.map((t) => (
+                          <option key={t.id} value={t.id} className="bg-black">
+                            {t.till_name} ({t.till_number})
+                          </option>
+                        ))}
+                      </select>
+                    </label>
+
+                    <label className="block">
+                      <span className="mb-2 block text-[11px] font-bold uppercase tracking-wider text-zinc-400">Amount</span>
+                      <input
+                        value={dailyAmount}
+                        onChange={(e) => setDailyAmount(e.target.value)}
+                        placeholder="e.g. 250"
+                        className="h-11 w-full rounded-2xl border border-white/10 bg-black/30 px-4 text-sm text-zinc-100 outline-none placeholder:text-zinc-500 focus:border-indigo-400/50"
+                      />
+                    </label>
+                  </div>
+
+                  <label className="block">
+                    <span className="mb-2 block text-[11px] font-bold uppercase tracking-wider text-zinc-400">Search</span>
+                    <input
+                      value={dailySearch}
+                      onChange={(e) => setDailySearch(e.target.value)}
+                      placeholder="Phone"
+                      className="h-11 w-full rounded-2xl border border-white/10 bg-black/30 px-4 text-sm text-zinc-100 outline-none placeholder:text-zinc-500 focus:border-indigo-400/50"
+                    />
+                  </label>
+                </div>
+
+                {dailySummary && (
+                  <div className="mt-4 grid grid-cols-2 gap-2 md:grid-cols-4">
+                    <div className="rounded-2xl border border-white/10 bg-black/20 p-3">
+                      <div className="text-[10px] font-bold uppercase tracking-wider text-zinc-500">Tx</div>
+                      <div className="mt-1 text-lg font-semibold text-zinc-100 tabular-nums">{dailySummary.totalTx}</div>
+                    </div>
+                    <div className="rounded-2xl border border-emerald-500/20 bg-emerald-500/5 p-3">
+                      <div className="text-[10px] font-bold uppercase tracking-wider text-emerald-300/80">Success</div>
+                      <div className="mt-1 text-lg font-semibold text-emerald-100 tabular-nums">{dailySummary.txSuccess}</div>
+                    </div>
+                    <div className="rounded-2xl border border-rose-500/20 bg-rose-500/5 p-3">
+                      <div className="text-[10px] font-bold uppercase tracking-wider text-rose-300/80">Failed</div>
+                      <div className="mt-1 text-lg font-semibold text-rose-100 tabular-nums">{dailySummary.txFailed}</div>
+                    </div>
+                    <div className="rounded-2xl border border-indigo-500/20 bg-indigo-500/5 p-3">
+                      <div className="text-[10px] font-bold uppercase tracking-wider text-indigo-300/80">Recipients</div>
+                      <div className="mt-1 text-lg font-semibold text-indigo-100 tabular-nums">{dailySummary.recipients}</div>
+                      <div className="mt-1 text-[11px] text-indigo-200/70 tabular-nums">
+                        New: {dailySummary.recipientsNewEver} · SMS’d: {dailySummary.recipientsMessagedEver}
+                      </div>
+                    </div>
+                  </div>
+                )}
+
+                <div className="mt-4 overflow-hidden rounded-3xl border border-white/10">
+                  <div className="flex items-center justify-between gap-3 border-b border-white/10 bg-black/30 px-4 py-3">
+                    <div className="text-xs font-semibold text-zinc-100">
+                      Recipients
+                      <span className="ml-2 text-xs text-zinc-400">{dailyLoading ? "Loading…" : `${dailyTotal}`}</span>
+                    </div>
+                    <div className="flex flex-wrap items-center gap-2">
+                      <button
+                        type="button"
+                        onClick={() => {
+                          const next: Record<string, true> = { ...dailySelected };
+                          for (const r of dailyRows) next[r.phone_e164] = true;
+                          setDailySelected(next);
+                        }}
+                        className="h-9 rounded-2xl border border-white/10 bg-white/5 px-3 text-xs font-semibold text-zinc-100 transition hover:bg-white/10"
+                      >
+                        Select page
+                      </button>
+                      <button
+                        type="button"
+                        onClick={() => setDailySelected({})}
+                        className="h-9 rounded-2xl border border-white/10 bg-white/5 px-3 text-xs font-semibold text-zinc-100 transition hover:bg-white/10"
+                      >
+                        Clear
+                      </button>
+                    </div>
+                  </div>
+
+                  <div className="grid grid-cols-12 gap-2 border-b border-white/10 bg-black/20 px-4 py-3 text-[11px] font-bold uppercase tracking-wider text-zinc-400">
+                    <div className="col-span-1">Pick</div>
+                    <div className="col-span-4">Phone</div>
+                    <div className="col-span-2">Tx</div>
+                    <div className="col-span-2">SMS today</div>
+                    <div className="col-span-3">SMS ever</div>
+                  </div>
+
+                  {dailyRows.length === 0 && !dailyLoading && (
+                    <div className="bg-black/20 px-4 py-6 text-sm text-zinc-300">No recipients for this day.</div>
+                  )}
+
+                  {dailyRows.map((r) => {
+                    const checked = Boolean(dailySelected[r.phone_e164]);
+                    return (
+                      <div
+                        key={r.phone_e164}
+                        className={cn(
+                          "grid grid-cols-12 gap-2 border-b border-white/5 bg-black/10 px-4 py-3 text-sm text-zinc-100",
+                          checked ? "bg-indigo-500/5" : ""
+                        )}
+                      >
+                        <div className="col-span-1">
+                          <input
+                            type="checkbox"
+                            checked={checked}
+                            onChange={(e) => {
+                              setDailySelected((cur) => {
+                                const next = { ...cur };
+                                if (e.target.checked) next[r.phone_e164] = true;
+                                else delete next[r.phone_e164];
+                                return next;
+                              });
+                            }}
+                            className="mt-0.5 h-4 w-4 accent-indigo-500"
+                          />
+                        </div>
+                        <div className="col-span-4">
+                          <div className="font-semibold text-zinc-100">{r.phone_local}</div>
+                          <div className="mt-1 text-xs text-zinc-500">{formatDateTime(r.last_tx_at)}</div>
+                        </div>
+                        <div className="col-span-2 text-xs text-zinc-200">
+                          <div className="tabular-nums">{r.tx_count} tx</div>
+                          <div className="mt-1 text-[11px] text-zinc-500 tabular-nums">
+                            s:{r.success_count} f:{r.failed_count} p:{r.pending_count}
+                          </div>
+                        </div>
+                        <div className="col-span-2 text-xs text-zinc-200">
+                          <div className="tabular-nums">{r.sms_day_count}</div>
+                          <div className="mt-1 text-[11px] text-zinc-500 tabular-nums">
+                            d:{r.sms_day_delivered} s:{r.sms_day_sent} f:{r.sms_day_failed}
+                          </div>
+                        </div>
+                        <div className="col-span-3 text-xs text-zinc-200">
+                          <div className="flex items-center justify-between gap-2">
+                            <span className="tabular-nums">{r.sms_ever_count}</span>
+                            <StatusPill value={r.sms_ever_last_status || (r.sms_ever_count ? "sent" : "queued")} />
+                          </div>
+                          <div className="mt-1 text-[11px] text-zinc-500 tabular-nums">
+                            d:{r.sms_ever_delivered} s:{r.sms_ever_sent} f:{r.sms_ever_failed}
+                          </div>
+                        </div>
+                      </div>
+                    );
+                  })}
+                </div>
+
+                <div className="mt-4 flex flex-wrap items-center justify-between gap-3">
+                  <div className="text-xs text-zinc-400">Selected {Object.keys(dailySelected).length}</div>
+                  <div className="flex flex-wrap items-center gap-2">
+                    <button
+                      type="button"
+                      disabled={dailyCreateLoading}
+                      onClick={() => onCreateCampaignFromDailySelection({ dispatch: false })}
+                      className={cn(
+                        "h-10 rounded-2xl border border-white/10 bg-white/5 px-4 text-sm font-semibold text-zinc-100 transition hover:bg-white/10 disabled:cursor-not-allowed disabled:opacity-60"
+                      )}
+                    >
+                      {dailyCreateLoading ? "Working…" : "Create campaign"}
+                    </button>
+                    <button
+                      type="button"
+                      disabled={dailyCreateLoading}
+                      onClick={() => onCreateCampaignFromDailySelection({ dispatch: true })}
+                      className={cn(
+                        "h-10 rounded-2xl bg-gradient-to-r from-indigo-500 to-fuchsia-500 px-4 text-sm font-semibold text-white shadow-lg shadow-indigo-500/20 transition hover:opacity-95 disabled:cursor-not-allowed disabled:opacity-60"
+                      )}
+                    >
+                      {dailyCreateLoading ? "Working…" : "Create + Dispatch"}
+                    </button>
+                  </div>
                 </div>
               </div>
 

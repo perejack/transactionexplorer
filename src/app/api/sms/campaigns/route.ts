@@ -71,6 +71,19 @@ function pickNumber(value: unknown) {
   return Number.isFinite(n) ? n : undefined;
 }
 
+function normalizeRecipients(input: unknown) {
+  if (!Array.isArray(input)) return [] as string[];
+  const out: string[] = [];
+  for (const v of input) {
+    const raw = pickString(v);
+    if (!raw) continue;
+    const e164 = normalizePhoneE164(raw);
+    if (!e164) continue;
+    out.push(e164);
+  }
+  return Array.from(new Set(out));
+}
+
 export async function GET() {
   const supabase = await createSupabaseServerClient();
   const {
@@ -133,6 +146,8 @@ export async function POST(req: Request) {
   const name = pickString(body?.name) || `Campaign ${new Date().toISOString()}`;
   const senderId = pickString(body?.senderId) || "fluxsms";
 
+  const explicitRecipients = normalizeRecipients(body?.recipients);
+
   const segment = (body?.segment && typeof body.segment === "object") ? body.segment : {};
   const tillId = pickString(segment?.tillId);
   const txStatus = pickString(segment?.status);
@@ -144,6 +159,76 @@ export async function POST(req: Request) {
   const maxScan = Math.min(50000, Math.max(100, Number(body?.maxScan ?? 10000)));
 
   const admin = createSupabaseAdminClient();
+
+  if (explicitRecipients.length > 0) {
+    const byPhone = new Map<
+      string,
+      { phoneLocal: string; phoneE164: string; txId: string | null; txStatus: string | null; amount: number | null }
+    >();
+
+    for (const phoneE164 of explicitRecipients) {
+      const local = toKenyanLocalPhone(phoneE164);
+      if (!local) continue;
+      byPhone.set(phoneE164, {
+        phoneLocal: local,
+        phoneE164,
+        txId: null,
+        txStatus: null,
+        amount: null,
+      });
+    }
+
+    if (byPhone.size === 0) {
+      return NextResponse.json({ status: "error", message: "No valid recipients" }, { status: 400 });
+    }
+
+    const insertCampaign = await admin
+      .from("sms_campaigns")
+      .insert({
+        name,
+        sender_id: senderId,
+        message,
+        segment: {
+          mode: "recipients",
+          recipientsCount: byPhone.size,
+        },
+        created_by_email: user.email || null,
+        status: "draft",
+        target_count: byPhone.size,
+      })
+      .select("*")
+      .single();
+
+    if (insertCampaign.error || !insertCampaign.data) {
+      return NextResponse.json(
+        { status: "error", message: insertCampaign.error?.message || "Failed to create campaign" },
+        { status: 500 }
+      );
+    }
+
+    const campaign = insertCampaign.data as any;
+
+    const rows = Array.from(byPhone.values()).map((p) => ({
+      campaign_id: campaign.id,
+      phone: p.phoneLocal,
+      phone_normalized: p.phoneE164,
+      tx_id: p.txId,
+      tx_status: p.txStatus,
+      amount: p.amount,
+      status: "queued",
+    }));
+
+    const batchSize = 500;
+    for (let i = 0; i < rows.length; i += batchSize) {
+      const chunk = rows.slice(i, i + batchSize);
+      const ins = await admin.from("sms_messages").insert(chunk);
+      if (ins.error) {
+        return NextResponse.json({ status: "error", message: ins.error.message }, { status: 500 });
+      }
+    }
+
+    return NextResponse.json({ status: "success", campaign });
+  }
 
   let tillColumn: string;
   try {
