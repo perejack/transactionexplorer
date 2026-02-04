@@ -89,18 +89,15 @@ export async function GET(req: Request) {
   const status = pickString(url.searchParams.get("status"));
   const startDate = pickString(url.searchParams.get("startDate"));
   const endDate = pickString(url.searchParams.get("endDate"));
-  const maxScan = parseIntSafe(url.searchParams.get("maxScan"), 10000);
-
-  if (!tillId) {
-    return NextResponse.json({ status: "error", message: "tillId is required" }, { status: 400 });
-  }
+  const maxScan = parseIntSafe(url.searchParams.get("maxScan"), 50000);
 
   const admin = createSupabaseAdminClient();
 
   const tillColumn = await detectTransactionsTillColumn(admin);
 
   const buildCountQuery = (tillColumn: string) => {
-    let q = admin.from("transactions").select("amount", { count: "exact" }).eq(tillColumn, tillId);
+    let q = admin.from("transactions").select("amount", { count: "exact" });
+    if (tillId) q = q.eq(tillColumn, tillId);
     if (status) q = q.eq("status", status);
     if (startDate) q = q.gte("created_at", startDate);
     if (endDate) q = q.lte("created_at", endDate);
@@ -121,7 +118,7 @@ export async function GET(req: Request) {
     return NextResponse.json(
       {
         status: "error",
-        message: `Too many rows (${total}). Narrow date range or increase maxScan.`,
+        message: `Too many rows (${total}). Narrow filters or increase maxScan.`,
       },
       { status: 413 }
     );
@@ -131,7 +128,8 @@ export async function GET(req: Request) {
   const amounts: Record<string, number> = {};
 
   for (let offset = 0; offset < total; offset += pageSize) {
-    let q = admin.from("transactions").select("amount").eq(tillColumn, tillId);
+    let q = admin.from("transactions").select("amount");
+    if (tillId) q = q.eq(tillColumn, tillId);
     if (status) q = q.eq("status", status);
     if (startDate) q = q.gte("created_at", startDate);
     if (endDate) q = q.lte("created_at", endDate);
