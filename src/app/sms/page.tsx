@@ -686,6 +686,7 @@ export default function SmsDashboardPage() {
           return;
         }
 
+        setSegmentBreakdown((json?.statusBreakdown || baseJson?.statusBreakdown || null) as any);
         setSegmentPreview((json?.preview || null) as any);
       } finally {
         setSegmentPreviewLoading(false);
