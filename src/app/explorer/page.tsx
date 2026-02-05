@@ -83,7 +83,10 @@ function IconButton({
 }
 
 function toCsvCell(value: unknown) {
-  const s = String(value ?? "");
+  let s = String(value ?? "");
+  if (/^\d{10,}$/.test(s)) {
+    s = `'${s}`;
+  }
   const escaped = s.replace(/"/g, '""');
   return `"${escaped}"`;
 }
