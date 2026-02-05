@@ -5,6 +5,7 @@ import { useRouter } from "next/navigation";
 import {
   ArrowLeft,
   Copy,
+  Download,
   ExternalLink,
   Loader2,
   LogOut,
@@ -79,6 +80,25 @@ function IconButton({
       {children}
     </button>
   );
+}
+
+function toCsvCell(value: unknown) {
+  const s = String(value ?? "");
+  const escaped = s.replace(/"/g, '""');
+  return `"${escaped}"`;
+}
+
+function downloadCsv(params: { filename: string; headers: string[]; rows: Array<Array<unknown>> }) {
+  const csv = [params.headers.map(toCsvCell).join(","), ...params.rows.map((r) => r.map(toCsvCell).join(","))].join("\n");
+  const blob = new Blob([csv], { type: "text/csv;charset=utf-8" });
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement("a");
+  a.href = url;
+  a.download = params.filename;
+  document.body.appendChild(a);
+  a.click();
+  a.remove();
+  URL.revokeObjectURL(url);
 }
 
 function Field({ label, value }: { label: string; value: React.ReactNode }) {
@@ -487,6 +507,24 @@ export default function ExplorerPage() {
                     </p>
                   </div>
                   <div className="flex items-center gap-2">
+                    <button
+                      type="button"
+                      onClick={() => {
+                        const amountLabel = selectedAmount !== null ? String(selectedAmount) : "all";
+                        const stLabel = status ? status : "all";
+                        downloadCsv({
+                          filename: `transactions-page-${txPage}-amount-${amountLabel}-status-${stLabel}.csv`,
+                          headers: ["created_at", "phone", "amount", "status", "reference", "id"],
+                          rows: txRows.map((tx) => [tx.created_at, tx.phone_number, tx.amount, tx.status, tx.reference || "", tx.id]),
+                        });
+                      }}
+                      disabled={txRows.length === 0}
+                      className="inline-flex h-10 items-center justify-center gap-2 rounded-2xl border border-white/10 bg-black/20 px-4 text-sm font-semibold text-zinc-100 transition hover:bg-white/5 disabled:cursor-not-allowed disabled:opacity-50"
+                      title="Download current page as CSV"
+                    >
+                      <Download className="h-4 w-4" />
+                      Download
+                    </button>
                     <button
                       type="button"
                       onClick={() => setTxPage((p) => Math.max(1, p - 1))}

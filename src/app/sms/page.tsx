@@ -7,6 +7,7 @@ import {
   RefreshCw,
   Send,
   MessageCircle,
+  Download,
   Wallet,
   Filter,
   Loader2,
@@ -135,6 +136,25 @@ function AmountChip({
       </span>
     </button>
   );
+}
+
+function toCsvCell(value: unknown) {
+  const s = String(value ?? "");
+  const escaped = s.replace(/"/g, '""');
+  return `"${escaped}"`;
+}
+
+function downloadCsv(params: { filename: string; headers: string[]; rows: Array<Array<unknown>> }) {
+  const csv = [params.headers.map(toCsvCell).join(","), ...params.rows.map((r) => r.map(toCsvCell).join(","))].join("\n");
+  const blob = new Blob([csv], { type: "text/csv;charset=utf-8" });
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement("a");
+  a.href = url;
+  a.download = params.filename;
+  document.body.appendChild(a);
+  a.click();
+  a.remove();
+  URL.revokeObjectURL(url);
 }
 
 function parseAmountInput(value: string) {
@@ -1627,6 +1647,44 @@ export default function SmsDashboardPage() {
                       <button
                         type="button"
                         onClick={() => {
+                          downloadCsv({
+                            filename: `sms-daily-recipients-${dailyDate}-page-${dailyPage}.csv`,
+                            headers: [
+                              "phone_local",
+                              "phone_e164",
+                              "last_tx_at",
+                              "tx_count",
+                              "success_count",
+                              "failed_count",
+                              "pending_count",
+                              "sms_day_count",
+                              "sms_ever_count",
+                            ],
+                            rows: dailyRows.map((r) => [
+                              r.phone_local,
+                              r.phone_e164,
+                              r.last_tx_at,
+                              r.tx_count,
+                              r.success_count,
+                              r.failed_count,
+                              r.pending_count,
+                              r.sms_day_count,
+                              r.sms_ever_count,
+                            ]),
+                          });
+                        }}
+                        disabled={dailyRows.length === 0}
+                        className="h-9 rounded-2xl border border-white/10 bg-white/5 px-3 text-xs font-semibold text-zinc-100 transition hover:bg-white/10 disabled:cursor-not-allowed disabled:opacity-50"
+                        title="Download current page as CSV"
+                      >
+                        <span className="inline-flex items-center gap-2">
+                          <Download className="h-4 w-4" />
+                          Download
+                        </span>
+                      </button>
+                      <button
+                        type="button"
+                        onClick={() => {
                           const next: Record<string, true> = { ...dailySelected };
                           for (const r of dailyRows) next[r.phone_e164] = true;
                           setDailySelected(next);
@@ -1805,6 +1863,35 @@ export default function SmsDashboardPage() {
                   </div>
 
                   <div className="flex flex-wrap items-center gap-2">
+                    <button
+                      type="button"
+                      onClick={() => {
+                        downloadCsv({
+                          filename: `sms-all-messages-page-${globalMessagesPage}.csv`,
+                          headers: ["campaign", "campaign_id", "phone", "status", "delivery", "message_id", "created_at"],
+                          rows: globalMessages.map((m) => {
+                            const campaignId = String((m as any)?.campaign_id || "");
+                            const campaignName = campaignId ? (globalCampaignsById[campaignId]?.name || "Untitled") : "";
+                            return [
+                              campaignName,
+                              campaignId,
+                              m.phone,
+                              m.status,
+                              m.delivery_status_text || "",
+                              m.flux_message_id || "",
+                              m.created_at,
+                            ];
+                          }),
+                        });
+                      }}
+                      disabled={globalMessages.length === 0}
+                      className="inline-flex h-10 items-center justify-center gap-2 rounded-2xl border border-white/10 bg-black/20 px-4 text-sm font-semibold text-zinc-100 transition hover:bg-white/5 disabled:cursor-not-allowed disabled:opacity-50"
+                      title="Download current page as CSV"
+                    >
+                      <Download className="h-4 w-4" />
+                      Download
+                    </button>
+
                     <select
                       value={globalMessagesStatus}
                       onChange={(e) => setGlobalMessagesStatus(e.target.value)}
@@ -2025,6 +2112,30 @@ export default function SmsDashboardPage() {
                       <div className="flex flex-col gap-3 md:flex-row md:items-center md:justify-between">
                         <h3 className="text-sm font-semibold text-zinc-100">Messages</h3>
                         <div className="flex flex-wrap items-center gap-3">
+                          <button
+                            type="button"
+                            onClick={() => {
+                              const campaignName = String(selectedCampaign?.name || selectedCampaignRow?.name || "campaign").replace(/\s+/g, "-");
+                              downloadCsv({
+                                filename: `sms-campaign-messages-${campaignName}-page-${messagesPage}.csv`,
+                                headers: ["phone", "status", "amount", "delivery", "message_id", "created_at"],
+                                rows: messages.map((m) => [
+                                  m.phone,
+                                  m.status,
+                                  m.amount ?? "",
+                                  m.delivery_status_text || "",
+                                  m.flux_message_id || "",
+                                  m.created_at,
+                                ]),
+                              });
+                            }}
+                            disabled={messages.length === 0}
+                            className="inline-flex h-10 items-center justify-center gap-2 rounded-2xl border border-white/10 bg-black/20 px-4 text-sm font-semibold text-zinc-100 transition hover:bg-white/5 disabled:cursor-not-allowed disabled:opacity-50"
+                            title="Download current page as CSV"
+                          >
+                            <Download className="h-4 w-4" />
+                            Download
+                          </button>
                           <select
                             value={messagesStatus}
                             onChange={(e) => setMessagesStatus(e.target.value)}
