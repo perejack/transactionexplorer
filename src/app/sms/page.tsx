@@ -1774,6 +1774,30 @@ export default function SmsDashboardPage() {
                 </div>
 
                 <div className="mt-4 flex flex-wrap items-center justify-between gap-3">
+                  <div className="text-xs text-zinc-400">
+                    Page {dailyPage} of {Math.max(1, Math.ceil(dailyTotal / dailyLimit))}
+                  </div>
+                  <div className="flex items-center gap-2">
+                    <button
+                      type="button"
+                      disabled={dailyPage <= 1}
+                      onClick={() => setDailyPage((p) => Math.max(1, p - 1))}
+                      className="h-10 rounded-2xl border border-white/10 bg-white/5 px-4 text-sm font-semibold text-zinc-100 transition hover:bg-white/10 disabled:cursor-not-allowed disabled:opacity-60"
+                    >
+                      Prev
+                    </button>
+                    <button
+                      type="button"
+                      disabled={dailyPage >= Math.ceil(dailyTotal / dailyLimit)}
+                      onClick={() => setDailyPage((p) => Math.min(Math.ceil(dailyTotal / dailyLimit), p + 1))}
+                      className="h-10 rounded-2xl border border-white/10 bg-white/5 px-4 text-sm font-semibold text-zinc-100 transition hover:bg-white/10 disabled:cursor-not-allowed disabled:opacity-60"
+                    >
+                      Next
+                    </button>
+                  </div>
+                </div>
+
+                <div className="mt-4 flex flex-wrap items-center justify-between gap-3">
                   <div className="text-xs text-zinc-400">Selected {Object.keys(dailySelected).length}</div>
                   <div className="flex flex-wrap items-center gap-2">
                     <button
