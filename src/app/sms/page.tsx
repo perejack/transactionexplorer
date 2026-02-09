@@ -342,6 +342,8 @@ export default function SmsDashboardPage() {
   const [refreshLoading, setRefreshLoading] = useState(false);
   const [refreshLimit, setRefreshLimit] = useState<string>("20");
 
+  const [resendLoading, setResendLoading] = useState(false);
+
   const [testPhone, setTestPhone] = useState<string>("");
   const [testMessage, setTestMessage] = useState<string>("");
   const [testLoading, setTestLoading] = useState(false);
@@ -1008,6 +1010,36 @@ export default function SmsDashboardPage() {
       }
     } finally {
       setRefreshLoading(false);
+    }
+  };
+
+  const onResendFailed = async () => {
+    if (!selectedCampaignId) return;
+    setResendLoading(true);
+    try {
+      const res = await fetch(`/api/sms/campaigns/${selectedCampaignId}/resend`, {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+      });
+
+      const json = await res.json().catch(() => ({}));
+      if (!res.ok) {
+        setToast(json?.message || "Resend failed");
+        return;
+      }
+
+      setToast(json?.message || `Rescheduled ${json?.rescheduled ?? 0} failed message(s)`);
+      await loadCampaigns();
+      const detailRes = await fetch(`/api/sms/campaigns/${selectedCampaignId}`, { cache: "no-store" });
+      const detailJson = await detailRes.json().catch(() => ({}));
+      if (detailRes.ok) {
+        setSelectedCampaign(detailJson?.campaign || null);
+        setSelectedCounts(detailJson?.counts || null);
+      }
+      // Reload messages to show updated status
+      await loadMessagesForCampaign(selectedCampaignId);
+    } finally {
+      setResendLoading(false);
     }
   };
 
@@ -2131,6 +2163,21 @@ export default function SmsDashboardPage() {
                         <div className="rounded-2xl border border-white/10 bg-black/20 p-4">
                           <div className="text-[11px] font-bold uppercase tracking-wider text-zinc-400">Failed</div>
                           <div className="mt-1 text-2xl font-semibold text-zinc-100">{selectedCounts.failed || 0}</div>
+                          {(selectedCounts.failed || 0) > 0 && (
+                            <button
+                              type="button"
+                              onClick={onResendFailed}
+                              disabled={resendLoading}
+                              className="mt-2 inline-flex h-7 items-center gap-1.5 rounded-xl border border-rose-500/30 bg-rose-500/10 px-2.5 text-xs font-semibold text-rose-200 transition hover:bg-rose-500/20 disabled:cursor-not-allowed disabled:opacity-60"
+                            >
+                              {resendLoading ? (
+                                <Loader2 className="h-3.5 w-3.5 animate-spin" />
+                              ) : (
+                                <Send className="h-3.5 w-3.5" />
+                              )}
+                              {resendLoading ? "Resending…" : "Resend"}
+                            </button>
+                          )}
                         </div>
                       </div>
                     )}
