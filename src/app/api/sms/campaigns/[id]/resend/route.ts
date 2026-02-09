@@ -41,7 +41,6 @@ export async function POST(_req: Request, ctx: { params: Promise<{ id: string }>
       flux_message_id: null,
       send_response: null,
       delivery_status_text: null,
-      updated_at: new Date().toISOString(),
     })
     .eq("campaign_id", campaignId)
     .eq("status", "failed")
